@@ -873,6 +873,66 @@
             );
         };
 
+        // --- STRESS TEST (Simulate 30 stations at once) ---
+        window.runStressTest = async () => {
+            window.showConfirmModal(
+                'จำลองการส่งข้อมูล 30 หน่วย?',
+                'ระบบจะทำการสุ่มคะแนนและยิงข้อมูลทั้ง 30 หน่วยเข้า Firebase พร้อมกันในเสี้ยววินาที เพื่อทดสอบความเสถียร',
+                'เริ่มการทดสอบ',
+                'bg-purple-600 hover:bg-purple-700',
+                async () => {
+                    if (!isFirebaseReady) return window.showToast('รอสักครู่', 'กำลังเชื่อมต่อ Firebase', true);
+                    
+                    window.showToast('กำลังทดสอบ...', 'กำลังยิงข้อมูล 30 คิวพร้อมกัน กรุณาดูที่หน้า Dashboard', false);
+                    
+                    let promises = [];
+                    const nowMs = Date.now();
+                    const nowTime = new Date().toLocaleTimeString('th-TH', {hour: '2-digit', minute:'2-digit', second:'2-digit'});
+                    const lastUpdatedStr = new Date().toLocaleDateString('th-TH', { year: 'numeric', month: 'short', day: 'numeric' }) + ' ' + nowTime;
+
+                    // Loop เขต 1 และ 2
+                    [1, 2].forEach(zone => {
+                        let maxUnit = zone === 1 ? 13 : 17;
+                        for(let s=1; s<=maxUnit; s++) {
+                            let stationKey = `${zone}_${s}`;
+                            let dotUpdates = {};
+
+                            // สร้างคะแนนจำลอง
+                            dotUpdates[`scores.z${zone}_s${s}_eligible`] = 800 + Math.floor(Math.random() * 200);
+                            
+                            state.mayorCandidates.forEach(c => {
+                                dotUpdates[`scores.z${zone}_s${s}_candidate_${c.id}`] = Math.floor(Math.random() * 300);
+                            });
+                            state.councilCandidates[zone].forEach(c => {
+                                dotUpdates[`scores.z${zone}_s${s}_candidate_${c.id}`] = Math.floor(Math.random() * 300);
+                            });
+
+                            dotUpdates[`scores.z${zone}_s${s}_mayor_invalid`] = Math.floor(Math.random() * 20);
+                            dotUpdates[`scores.z${zone}_s${s}_mayor_novote`] = Math.floor(Math.random() * 30);
+                            dotUpdates[`scores.z${zone}_s${s}_council_invalid`] = Math.floor(Math.random() * 20);
+                            dotUpdates[`scores.z${zone}_s${s}_council_novote`] = Math.floor(Math.random() * 30);
+
+                            dotUpdates[`stationLastUpdated.${stationKey}`] = nowMs;
+                            dotUpdates[`stationSubmitCount.${stationKey}`] = 1;
+                            dotUpdates['lastUpdated'] = lastUpdatedStr;
+
+                            // ส่งคำสั่งอัปเดตแบบขนาน (Parallel)
+                            let p = updateDoc(mainDocRef, dotUpdates).catch(async (e) => {
+                                if(e.code === 'not-found') await setDoc(mainDocRef, { _initialized: true }, { merge: true });
+                            });
+                            promises.push(p);
+                        }
+                    });
+
+                    // รอให้ทั้ง 30 คำสั่งเสร็จสิ้น
+                    await Promise.all(promises);
+                    
+                    triggerAutoSync(); // สั่งส่งเข้า Google Sheets รอบเดียว
+                    window.showToast('ทดสอบสำเร็จ!', 'ข้อมูลทั้ง 30 หน่วยส่งเข้า Firebase เรียบร้อยโดยไม่มีการทับซ้อน');
+                }
+            );
+        };
+
         // --- Unlock Station (Admin) ---
         window.unlockStation = (zone, station) => {
             window.showConfirmModal(
@@ -1660,6 +1720,16 @@
                 </div>
             `;
             html += `</div>`;
+
+            // Stress Test (Developer)
+            html += `
+            <div class="bg-purple-50 rounded-2xl shadow-sm border border-purple-200 p-4 sm:p-6 mb-4 sm:mb-6">
+                <h3 class="font-bold text-purple-700 mb-2 flex items-center gap-2"><i class="fa-solid fa-flask"></i> ทดสอบความเสถียร (Stress Test)</h3>
+                <p class="text-xs text-purple-600 mb-4">ทดสอบจำลองเจ้าหน้าที่ 30 หน่วย กดส่งคะแนนพร้อมกันในเสี้ยววินาที เพื่อดูการแสดงผลบน Dashboard</p>
+                <button onclick="runStressTest()" class="px-4 py-2 sm:py-3 rounded-xl font-bold text-white bg-purple-600 hover:bg-purple-700 shadow-md transition-all active:scale-95 text-xs sm:text-sm border-b-4 border-purple-800 flex items-center gap-2">
+                    <i class="fa-solid fa-bolt"></i> จำลองยิงข้อมูล 30 หน่วยพร้อมกัน
+                </button>
+            </div>`;
 
             // Candidates Management
             html += `
