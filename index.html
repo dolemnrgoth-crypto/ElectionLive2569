@@ -923,6 +923,14 @@
             if (isFinal) state.stationClosed[stationKey] = true;
             state.lastUpdated = lastUpdatedStr;
 
+            // 🔴 ล็อคหน้าจอทันทีถ้าปิดหีบ เพื่อป้องกันการกดซ้ำระหว่างรออัปเดตข้อมูล
+            draftScores = {};
+            localStorage.removeItem('electionDraftScoresV9');
+            localStorage.setItem('electionNongBuaSalaDataV9', JSON.stringify(state)); 
+            if (isFinal) {
+                renderApp();
+            }
+
             let dotUpdates = {};
             Object.keys(newScores).forEach(key => {
                 dotUpdates[`scores.${key}`] = newScores[key];
@@ -953,10 +961,6 @@
                     }
                 }
             }
-            
-            draftScores = {};
-            localStorage.removeItem('electionDraftScoresV9');
-            localStorage.setItem('electionNongBuaSalaDataV9', JSON.stringify(state)); 
             
             triggerAutoSync();
 
@@ -1047,6 +1051,14 @@
             if (isFinal) state.stationClosed[stationKey] = true;
             state.lastUpdated = lastUpdatedStr;
 
+            // 🔴 ล็อคหน้าจอทันทีถ้าปิดหีบ เพื่อป้องกันการกดซ้ำระหว่างรออัปเดตข้อมูล
+            draftScores = {};
+            localStorage.removeItem('electionDraftScoresV9');
+            localStorage.setItem('electionNongBuaSalaDataV9', JSON.stringify(state)); 
+            if (isFinal) {
+                renderApp();
+            }
+
             let dotUpdates = {};
             Object.keys(newScores).forEach(key => {
                 dotUpdates[`scores.${key}`] = newScores[key];
@@ -1077,10 +1089,6 @@
                     }
                 }
             }
-            
-            draftScores = {};
-            localStorage.removeItem('electionDraftScoresV9');
-            localStorage.setItem('electionNongBuaSalaDataV9', JSON.stringify(state)); 
             
             triggerAutoSync();
             
