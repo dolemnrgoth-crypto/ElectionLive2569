@@ -296,10 +296,19 @@
                 mainDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'election_db', 'main_state');
 
                 const initAuth = async () => {
-                    if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                        await signInWithCustomToken(auth, __initial_auth_token);
-                    } else {
-                        await signInAnonymously(auth);
+                    try {
+                        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                            await signInWithCustomToken(auth, __initial_auth_token);
+                        } else {
+                            await signInAnonymously(auth);
+                        }
+                    } catch (authErr) {
+                        console.error("Firebase Auth Error:", authErr);
+                        let msg = authErr.message;
+                        if (authErr.code === 'auth/operation-not-allowed') {
+                            msg = "ยังไม่ได้เปิดใช้งานโหมด 'Anonymous' ใน Firebase Authentication";
+                        }
+                        alert("❌ ไม่สามารถเชื่อมต่อ Firebase ได้ (ล็อกอินล้มเหลว)\nสาเหตุ: " + msg + "\n\nกรุณากลับไปตั้งค่าใน Firebase Console ให้ถูกต้องครับ");
                     }
                 };
                 initAuth();
@@ -316,14 +325,22 @@
                             } else {
                                 isInitialLoad = false;
                             }
-                        }, (error) => console.error("Firestore Listen Error:", error));
+                        }, (error) => {
+                            console.error("Firestore Listen Error:", error);
+                            if (error.code === 'permission-denied') {
+                                alert("❌ ข้อผิดพลาด Firebase (Firestore)\nสาเหตุ: ไม่มีสิทธิ์อ่าน/เขียนข้อมูล\n\n(คุณอาจลืมสร้างฐานข้อมูลแบบ 'Test Mode' หรือกติกาความปลอดภัยของ Firebase หมดอายุครับ)");
+                            }
+                        });
                     }
                 });
             } else { 
                 console.warn("ยังไม่ได้ใส่ตั้งค่า Firebase, ข้อมูลจะไม่ Real-time ระหว่างเครื่อง");
                 loadLocalData(); 
             }
-        } catch (e) { loadLocalData(); }
+        } catch (e) { 
+            console.error("Firebase Init Error:", e);
+            loadLocalData(); 
+        }
 
         // --- GOOGLE SHEET SYNC ---
         async function fetchFromGoogleSheet() {
