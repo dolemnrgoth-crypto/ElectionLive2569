@@ -25,9 +25,15 @@
             header, #mobile-nav, .print\:hidden { display: none !important; }
             main { padding: 0 !important; margin: 0 !important; max-width: 100% !important; }
             .shadow-sm, .shadow-md, .shadow-lg, .shadow-xl { box-shadow: none !important; }
-            .border-slate-200 { border-color: #e2e8f0 !important; }
+            .border-slate-200 { border-color: #000 !important; border-width: 1px !important;}
             * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
             .h-\[calc\(100vh-6rem\)\] { height: auto !important; min-height: auto !important; }
+            .overflow-x-auto { overflow: visible !important; }
+            .print-page-break { page-break-before: always; }
+            table { border-collapse: collapse !important; width: 100% !important; }
+            th, td { border: 1px solid #000 !important; padding: 4px !important; color: #000 !important; }
+            tr { page-break-inside: avoid !important; }
+            .print-bg-gray { background-color: #f1f5f9 !important; }
         }
     </style>
 </head>
@@ -70,7 +76,7 @@
         import { getFirestore, doc, setDoc, updateDoc, onSnapshot, increment } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // =========================================================================
-        // 🔴 FIREBASE CONFIGURATION
+        // 🔴 ตั้งค่า FIREBASE ของคุณที่นี่ (เพื่อให้ระบบทำงานบน GitHub ได้ 100%)
         // =========================================================================
         const myFirebaseConfig = {
             apiKey: "AIzaSyCrj5dW6fphwWjEQONUmWYzsb32K13cOU4",
@@ -98,7 +104,7 @@
             ],
             councilCandidates: {
                 1: Array.from({ length: 13 }, (_, i) => ({ id: `c1_${i + 1}`, number: i + 1, name: `ผู้สมัคร ส.ท. เขต 1 เบอร์ ${i + 1}` })),
-                2: Array.from({ length: 17 }, (_, i) => ({ id: `c2_${i + 1}`, number: i + 1, name: `ผู้สมัคร ส.ท. เขต 2 เบอร์ ${i + 1}` }))
+                2: Array.from({ length: 13 }, (_, i) => ({ id: `c2_${i + 1}`, number: i + 1, name: `ผู้สมัคร ส.ท. เขต 2 เบอร์ ${i + 1}` }))
             },
             scores: {}, 
             staffAccounts: {},
@@ -120,6 +126,9 @@
         let isInitialLoad = true;
         let previousUpdateTimes = {}; 
         let previousClosedStatus = {}; 
+        
+        // สถานะแท็บสำหรับตารางรายงานผลสรุป
+        window.currentReportTab = 'mayor';
 
         // --- TOAST NOTIFICATION SYSTEM ---
         window.showToast = (title, desc, isAlert = false) => {
@@ -465,6 +474,21 @@
             const turnout = valid + invalid + novote;
             return { valid, invalid, novote, turnout, eligible };
         }
+        
+        // เช็คว่าทุกหน่วยเลือกตั้ง (ทั้งหมด 30 หน่วย) ปิดหีบครบหรือยัง
+        window.areAllStationsClosed = function() {
+            let totalStations = 0;
+            let closedStations = 0;
+            [1, 2].forEach(zone => {
+                getStationsForZone(zone).forEach(s => {
+                    totalStations++;
+                    if (state.stationClosed[`${zone}_${s}`]) {
+                        closedStations++;
+                    }
+                });
+            });
+            return totalStations > 0 && totalStations === closedStations;
+        };
 
         function startTimer() {
             if (timerInterval) clearInterval(timerInterval);
@@ -558,6 +582,7 @@
         window.logout = () => { state.currentUser = null; state.activeTab = 'dashboard'; if (timerInterval) clearInterval(timerInterval); renderApp(); };
         window.updateLoginZone = (val) => { state.loginZone = parseInt(val); renderApp(); };
         window.setLoginMode = (mode) => { state.loginMode = mode; renderApp(); };
+        window.setReportTab = (tab) => { window.currentReportTab = tab; renderApp(); };
 
         // --- CENTRAL INPUT CONTROLS ---
         window.changeCentralZone = (val) => {
@@ -580,6 +605,34 @@
             renderApp();
             const msg = state.isVotingOpen ? 'เปิดระบบรับคะแนนเรียบร้อยแล้ว' : 'ปิดระบบรับคะแนนชั่วคราวแล้ว';
             window.showToast('สถานะระบบ', msg);
+        };
+
+        window.openElectionAction = () => {
+            window.showConfirmModal(
+                'เปิดหีบ / ล้างคะแนนเพื่อเริ่มใหม่?',
+                'ระบบจะทำการ <b>ล้างคะแนนทุกหน่วยเป็น 0</b> และเปิดรับข้อมูล<br>เพื่อเตรียมรับคะแนนจริง (รหัสผ่าน/รายชื่อผู้สมัครยังคงเดิม)',
+                'ยืนยันเปิดหีบ',
+                'bg-emerald-600 hover:bg-emerald-700',
+                async () => {
+                    const cleanState = { ...state };
+                    cleanState.scores = {};
+                    cleanState.stationLastUpdated = {};
+                    cleanState.stationSubmitCount = {};
+                    cleanState.stationClosed = {};
+                    cleanState.lastUpdated = null;
+                    cleanState.isVotingOpen = true; 
+                    
+                    if (isFirebaseReady) {
+                        await setDoc(mainDocRef, cleanState);
+                    }
+                    localStorage.setItem('electionNongBuaSalaDataV9', JSON.stringify(cleanState));
+                    triggerAutoSync();
+                    
+                    window.showToast('เปิดหีบสำเร็จ', 'ระบบล้างข้อมูลเป็น 0 และพร้อมรับคะแนนจริงแล้ว');
+                    state = cleanState;
+                    renderApp();
+                }
+            );
         };
 
         window.clearVotingData = () => {
@@ -617,7 +670,7 @@
                 'เริ่มการทดสอบ',
                 'bg-purple-600 hover:bg-purple-700',
                 async () => {
-                    if (!isFirebaseReady) return window.showToast('รอสักครู่', 'ระบบยังไม่ได้เชื่อมต่อ Firebase (โปรดใส่ Config ในโค้ดก่อนใช้งานจริง)', true);
+                    if (!isFirebaseReady) return window.showToast('รอสักครู่', 'ระบบยังไม่ได้เชื่อมต่อ Firebase (โปรดใส่ Configในโค้ดก่อนใช้งานจริง)', true);
                     
                     window.showToast('กำลังทดสอบ...', 'กำลังยิงข้อมูล 30 คิวพร้อมกัน กรุณาดูที่หน้า Dashboard', false);
                     
@@ -648,6 +701,8 @@
 
                             dotUpdates[`stationLastUpdated.${stationKey}`] = nowMs;
                             dotUpdates[`stationSubmitCount.${stationKey}`] = 1;
+                            // **Stress Test ไม่ทำการปิดหีบอัตโนมัติ เพื่อให้ผู้ดูแลระบบทดสอบได้สมจริง**
+                            // dotUpdates[`stationClosed.${stationKey}`] = true;
                             dotUpdates['lastUpdated'] = lastUpdatedStr;
 
                             let p = updateDoc(mainDocRef, dotUpdates).catch(async (e) => {
@@ -1127,6 +1182,160 @@
             document.getElementById('mobile-nav').innerHTML = mobileNavHtml;
         }
 
+        // --- NEW REPORT SECTION GENERATOR ---
+        window.renderFinalUnitReport = function() {
+            let html = `
+                <div class="mt-8 bg-white rounded-2xl shadow-md border border-emerald-200 overflow-hidden fade-in relative mb-10 print:mt-4 print:shadow-none print:border-none print:mb-0">
+                    <div class="bg-gradient-to-r from-emerald-600 to-teal-700 p-4 sm:p-5 flex items-center justify-between relative overflow-hidden print:bg-none print:text-black print:p-0 print:border-b-2 print:border-slate-800 print:mb-4">
+                        <div class="absolute -right-6 -bottom-8 text-white/10 text-8xl rotate-[-15deg] pointer-events-none print:hidden"><i class="fa-solid fa-file-invoice"></i></div>
+                        <div class="relative z-10 flex items-center gap-3 print:text-black">
+                            <div class="p-2 bg-white/20 rounded-xl backdrop-blur-sm print:hidden"><i class="fa-solid fa-flag-checkered text-white text-xl sm:text-2xl"></i></div>
+                            <div>
+                                <h2 class="text-lg sm:text-2xl font-black text-white print:text-slate-900 tracking-wide">รายงานสรุปผลคะแนนรายหน่วย</h2>
+                                <p class="text-emerald-100 print:text-slate-600 text-xs sm:text-sm font-medium mt-0.5">ทุกหน่วยเลือกตั้งนับคะแนนเสร็จสมบูรณ์แล้ว</p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="flex border-b border-slate-200 bg-slate-50 print:hidden">
+                        <button onclick="setReportTab('mayor')" class="flex-1 py-3 text-sm font-bold transition-colors ${window.currentReportTab === 'mayor' ? 'bg-white text-emerald-700 border-b-2 border-emerald-500 shadow-[inset_0_2px_0_0_rgba(16,185,129,0.1)]' : 'text-slate-500 hover:bg-slate-100'}"><i class="fa-solid fa-medal mr-1"></i> นายกเทศมนตรี</button>
+                        <button onclick="setReportTab('council1')" class="flex-1 py-3 text-sm font-bold transition-colors border-l border-slate-200 ${window.currentReportTab === 'council1' ? 'bg-white text-blue-700 border-b-2 border-blue-500 shadow-[inset_0_2px_0_0_rgba(59,130,246,0.1)]' : 'text-slate-500 hover:bg-slate-100'}"><i class="fa-solid fa-users mr-1"></i> ส.ท. เขต 1</button>
+                        <button onclick="setReportTab('council2')" class="flex-1 py-3 text-sm font-bold transition-colors border-l border-slate-200 ${window.currentReportTab === 'council2' ? 'bg-white text-blue-700 border-b-2 border-blue-500 shadow-[inset_0_2px_0_0_rgba(59,130,246,0.1)]' : 'text-slate-500 hover:bg-slate-100'}"><i class="fa-solid fa-users mr-1"></i> ส.ท. เขต 2</button>
+                    </div>
+
+                    <div class="p-0 overflow-x-auto print:overflow-visible">
+            `;
+
+            const formatNum = (num) => num ? num.toLocaleString() : '0';
+
+            // GENERATE MAYOR REPORT
+            if (window.currentReportTab === 'mayor') {
+                html += `<table class="w-full text-xs sm:text-sm text-center border-collapse whitespace-nowrap print:text-[10px]">
+                    <thead class="bg-slate-100 text-slate-700 font-bold border-b-2 border-slate-300 print:bg-white print:text-black">
+                        <tr>
+                            <th class="py-2.5 px-3 border-r border-slate-200 w-16 sticky left-0 bg-slate-100 print:bg-transparent print:border-black print:static">เขต</th>
+                            <th class="py-2.5 px-3 border-r border-slate-200 w-16 sticky left-16 bg-slate-100 print:bg-transparent print:border-black print:static shadow-[inset_-1px_0_0_0_#e2e8f0] print:shadow-none">หน่วย</th>
+                            <th class="py-2.5 px-3 border-r border-slate-200 print:border-black text-indigo-700 print:text-black">ผู้มีสิทธิ์</th>
+                            <th class="py-2.5 px-3 border-r border-slate-200 print:border-black text-indigo-700 print:text-black">ใช้สิทธิ์</th>
+                            <th class="py-2.5 px-3 border-r border-slate-200 print:border-black text-emerald-700 print:text-black">บัตรดี</th>`;
+                
+                state.mayorCandidates.forEach(c => {
+                    html += `<th class="py-2.5 px-3 border-r border-slate-200 print:border-black bg-amber-50 print:bg-transparent">เบอร์ ${c.number}</th>`;
+                });
+
+                html += `   <th class="py-2.5 px-3 border-r border-slate-200 print:border-black text-slate-500 print:text-black">ไม่ประสงค์</th>
+                            <th class="py-2.5 px-3 border-slate-200 print:border-black text-red-600 print:text-black">บัตรเสีย</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-slate-100 print:divide-black">`;
+
+                let totals = { el: 0, turnout: 0, valid: 0, novote: 0, invalid: 0, c: {} };
+                state.mayorCandidates.forEach(c => totals.c[c.id] = 0);
+
+                [1, 2].forEach(zone => {
+                    getStationsForZone(zone).forEach(s => {
+                        const stats = getStationMayorStats(zone, s);
+                        totals.el += stats.eligible; totals.turnout += stats.turnout; totals.valid += stats.valid; totals.novote += stats.novote; totals.invalid += stats.invalid;
+                        
+                        html += `<tr class="hover:bg-slate-50 transition-colors print:border-b print:border-black">
+                                    <td class="py-2 px-3 border-r border-slate-200 sticky left-0 bg-white print:bg-transparent print:border-black print:static font-bold">${zone}</td>
+                                    <td class="py-2 px-3 border-r border-slate-200 sticky left-16 bg-white print:bg-transparent print:border-black print:static font-bold shadow-[inset_-1px_0_0_0_#e2e8f0] print:shadow-none">${s}</td>
+                                    <td class="py-2 px-3 border-r border-slate-200 print:border-black">${formatNum(stats.eligible)}</td>
+                                    <td class="py-2 px-3 border-r border-slate-200 print:border-black font-medium">${formatNum(stats.turnout)}</td>
+                                    <td class="py-2 px-3 border-r border-slate-200 print:border-black font-medium text-emerald-600 print:text-black">${formatNum(stats.valid)}</td>`;
+                        
+                        state.mayorCandidates.forEach(c => {
+                            const score = parseInt(state.scores[`z${zone}_s${s}_candidate_${c.id}`] || 0);
+                            totals.c[c.id] += score;
+                            html += `<td class="py-2 px-3 border-r border-slate-200 print:border-black font-bold text-amber-600 print:text-black bg-amber-50/30 print:bg-transparent">${formatNum(score)}</td>`;
+                        });
+
+                        html += `   <td class="py-2 px-3 border-r border-slate-200 print:border-black">${formatNum(stats.novote)}</td>
+                                    <td class="py-2 px-3 border-slate-200 print:border-black text-red-500 print:text-black">${formatNum(stats.invalid)}</td>
+                                </tr>`;
+                    });
+                });
+
+                html += `   <tr class="bg-slate-100 font-black text-slate-800 border-t-2 border-slate-300 print:border-black print:bg-transparent">
+                                <td colspan="2" class="py-3 px-3 border-r border-slate-300 print:border-black sticky left-0 bg-slate-100 shadow-[inset_-1px_0_0_0_#cbd5e1] print:shadow-none print:static print:bg-transparent">รวมทั้งหมด</td>
+                                <td class="py-3 px-3 border-r border-slate-300 print:border-black text-indigo-700 print:text-black">${formatNum(totals.el)}</td>
+                                <td class="py-3 px-3 border-r border-slate-300 print:border-black text-indigo-700 print:text-black">${formatNum(totals.turnout)}</td>
+                                <td class="py-3 px-3 border-r border-slate-300 print:border-black text-emerald-700 print:text-black">${formatNum(totals.valid)}</td>`;
+                state.mayorCandidates.forEach(c => { html += `<td class="py-3 px-3 border-r border-slate-300 print:border-black text-amber-700 print:text-black bg-amber-100/50 print:bg-transparent text-base">${formatNum(totals.c[c.id])}</td>`; });
+                html += `       <td class="py-3 px-3 border-r border-slate-300 print:border-black text-slate-600 print:text-black">${formatNum(totals.novote)}</td>
+                                <td class="py-3 px-3 border-slate-300 print:border-black text-red-600 print:text-black">${formatNum(totals.invalid)}</td>
+                            </tr>
+                        </tbody>
+                    </table>`;
+            } 
+            // GENERATE COUNCIL REPORT (Zone 1 or Zone 2)
+            else {
+                const zone = window.currentReportTab === 'council1' ? 1 : 2;
+                const candidates = state.councilCandidates[zone].sort((a,b) => a.number - b.number);
+                
+                html += `<table class="w-full text-xs sm:text-sm text-center border-collapse whitespace-nowrap print:text-[8px]">
+                    <thead class="bg-slate-100 text-slate-700 font-bold border-b-2 border-slate-300 print:bg-white print:text-black">
+                        <tr>
+                            <th class="py-2.5 px-3 border-r border-slate-200 w-16 sticky left-0 bg-slate-100 print:bg-transparent print:border-black print:static shadow-[inset_-1px_0_0_0_#e2e8f0] print:shadow-none">หน่วย</th>
+                            <th class="py-2.5 px-3 border-r border-slate-200 print:border-black text-indigo-700 print:text-black">ผู้มีสิทธิ์</th>
+                            <th class="py-2.5 px-3 border-r border-slate-200 print:border-black text-indigo-700 print:text-black">ใช้สิทธิ์</th>`;
+                
+                candidates.forEach(c => { html += `<th class="py-2.5 px-2 border-r border-slate-200 print:border-black text-blue-700 print:text-black bg-blue-50/50 print:bg-transparent">บ.${c.number}</th>`; });
+
+                html += `   <th class="py-2.5 px-3 border-r border-slate-200 print:border-black text-slate-500 print:text-black">ไม่ประสงค์</th>
+                            <th class="py-2.5 px-3 border-slate-200 print:border-black text-red-600 print:text-black">บัตรเสีย</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-slate-100 print:divide-black">`;
+
+                let totals = { el: 0, turnout: 0, novote: 0, invalid: 0, c: {} };
+                candidates.forEach(c => totals.c[c.id] = 0);
+
+                getStationsForZone(zone).forEach(s => {
+                    const el = parseInt(state.scores[`z${zone}_s${s}_eligible`] || 0);
+                    const novote = parseInt(state.scores[`z${zone}_s${s}_council_novote`] || 0);
+                    const c_invalid = parseInt(state.scores[`z${zone}_s${s}_council_invalid`] || 0);
+
+                    // ในการเลือกตั้ง ส.ท. ยอดผู้มาใช้สิทธิ์คำนวณจาก บัตรดี(ดูจากผู้มาใช้สิทธิ์ของนายกฯแทนได้ หรือกรอกเอง)
+                    // สำหรับตัวอย่างนี้ เราจะดึงยอด Turnout จากบัตรนายกมาใช้เป็นฐานเปรียบเทียบ
+                    const statsMayor = getStationMayorStats(zone, s);
+                    const turnout = statsMayor.turnout;
+
+                    totals.el += el; totals.turnout += turnout; totals.novote += novote; totals.invalid += c_invalid;
+                    
+                    html += `<tr class="hover:bg-slate-50 transition-colors print:border-b print:border-black">
+                                <td class="py-2 px-3 border-r border-slate-200 sticky left-0 bg-white print:bg-transparent print:border-black print:static font-bold shadow-[inset_-1px_0_0_0_#e2e8f0] print:shadow-none">${s}</td>
+                                <td class="py-2 px-3 border-r border-slate-200 print:border-black">${formatNum(el)}</td>
+                                <td class="py-2 px-3 border-r border-slate-200 print:border-black font-medium text-slate-600 print:text-black">${formatNum(turnout)}</td>`;
+                    
+                    candidates.forEach(c => {
+                        const score = parseInt(state.scores[`z${zone}_s${s}_candidate_${c.id}`] || 0);
+                        totals.c[c.id] += score;
+                        html += `<td class="py-2 px-2 border-r border-slate-200 print:border-black font-medium text-blue-600 print:text-black bg-blue-50/20 print:bg-transparent">${formatNum(score)}</td>`;
+                    });
+
+                    html += `   <td class="py-2 px-3 border-r border-slate-200 print:border-black">${formatNum(novote)}</td>
+                                <td class="py-2 px-3 border-slate-200 print:border-black text-red-500 print:text-black">${formatNum(c_invalid)}</td>
+                            </tr>`;
+                });
+
+                html += `   <tr class="bg-slate-100 font-black text-slate-800 border-t-2 border-slate-300 print:border-black print:bg-transparent">
+                                <td class="py-3 px-3 border-r border-slate-300 print:border-black sticky left-0 bg-slate-100 shadow-[inset_-1px_0_0_0_#cbd5e1] print:shadow-none print:static print:bg-transparent">รวม</td>
+                                <td class="py-3 px-3 border-r border-slate-300 print:border-black text-indigo-700 print:text-black">${formatNum(totals.el)}</td>
+                                <td class="py-3 px-3 border-r border-slate-300 print:border-black text-indigo-700 print:text-black">${formatNum(totals.turnout)}</td>`;
+                candidates.forEach(c => { html += `<td class="py-3 px-2 border-r border-slate-300 print:border-black text-blue-700 print:text-black bg-blue-100/50 print:bg-transparent">${formatNum(totals.c[c.id])}</td>`; });
+                html += `       <td class="py-3 px-3 border-r border-slate-300 print:border-black text-slate-600 print:text-black">${formatNum(totals.novote)}</td>
+                                <td class="py-3 px-3 border-slate-300 print:border-black text-red-600 print:text-black">${formatNum(totals.invalid)}</td>
+                            </tr>
+                        </tbody>
+                    </table>`;
+            }
+
+            html += `       </div>
+                        </div>`;
+            return html;
+        };
+
         window.renderDashboard = function() {
             const mayorCandidatesSorted = [...state.mayorCandidates].map(c => ({ ...c, score: getTotalScore(c.id) })).sort((a, b) => a.number - b.number);
             const m1 = mayorCandidatesSorted[0], m2 = mayorCandidatesSorted[1];
@@ -1161,7 +1370,7 @@
             const p1Z2 = tZ2 > 0 ? ((m1Z2/tZ2)*100).toFixed(1) : "0";
             const p2Z2 = tZ2 > 0 ? ((m2Z2/tZ2)*100).toFixed(1) : "0";
             
-            let html = '<div class="flex flex-col h-auto lg:h-[calc(100vh-5rem)] min-h-0 lg:min-h-[700px] fade-in gap-4 lg:gap-4 pb-24 sm:pb-6 lg:pb-2 w-full overflow-y-visible lg:overflow-hidden">';
+            let html = '<div class="flex flex-col h-auto lg:h-[calc(100vh-5rem)] min-h-0 lg:min-h-[700px] fade-in gap-4 lg:gap-4 pb-24 sm:pb-6 lg:pb-2 w-full overflow-y-visible lg:overflow-x-hidden print:pb-0">';
             
             html += '<div class="flex flex-col sm:flex-row justify-between items-center flex-shrink-0 bg-white p-3 lg:p-4 rounded-2xl shadow-sm border border-slate-200">';
             html += '<div class="flex items-center gap-3 lg:gap-4"><div class="p-2.5 bg-gradient-to-br from-indigo-500 to-purple-600 text-white rounded-xl shadow-sm"><i class="fa-solid fa-flag text-xl sm:text-2xl lg:text-3xl"></i></div><div><h2 class="text-lg sm:text-xl lg:text-3xl font-extrabold text-slate-800 leading-tight tracking-tight">ผลการนับคะแนนอย่างไม่เป็นทางการ</h2><p class="text-xs sm:text-sm lg:text-base font-bold text-indigo-600 mt-0.5">เทศบาลตำบลหนองบัวศาลา อ.เมือง จ.นครราชสีมา</p></div></div>';
@@ -1171,33 +1380,33 @@
             html += '<button onclick="window.print()" class="px-3 py-1.5 sm:px-3 sm:py-1.5 bg-slate-800 text-white rounded-lg text-xs sm:text-xs font-bold shadow-sm hover:bg-slate-700 transition-colors flex items-center gap-1.5"><i class="fa-solid fa-print"></i> <span class="hidden sm:inline">พิมพ์รายงาน</span></button></div></div>';
 
             if (m1 && m2) {
-                html += '<div class="bg-white rounded-2xl shadow-md border border-slate-200 overflow-hidden relative flex-shrink-0 flex flex-col lg:flex-row">';
-                html += '<div class="absolute top-0 left-0 w-full lg:w-1/2 h-1.5 bg-blue-500 z-20"></div><div class="absolute top-0 right-0 w-full lg:w-1/2 h-1.5 bg-orange-500 z-20"></div>';
-                html += '<div class="w-full lg:w-[60%] p-4 lg:p-6 flex flex-col relative border-b lg:border-b-0 lg:border-r border-slate-100"><div class="absolute top-0 left-1/2 transform -translate-x-1/2 bg-slate-800 text-white text-[10px] lg:text-xs font-bold px-4 py-1 rounded-b-xl shadow-md z-30 tracking-widest uppercase">ผู้สมัครนายกเทศมนตรี</div>';
+                html += '<div class="bg-white rounded-2xl shadow-md border border-slate-200 overflow-hidden relative flex-shrink-0 flex flex-col lg:flex-row print:shadow-none print:border-black">';
+                html += '<div class="absolute top-0 left-0 w-full lg:w-1/2 h-1.5 bg-blue-500 z-20 print:hidden"></div><div class="absolute top-0 right-0 w-full lg:w-1/2 h-1.5 bg-orange-500 z-20 print:hidden"></div>';
+                html += '<div class="w-full lg:w-[60%] p-4 lg:p-6 flex flex-col relative border-b lg:border-b-0 lg:border-r border-slate-100 print:border-black"><div class="absolute top-0 left-1/2 transform -translate-x-1/2 bg-slate-800 text-white print:bg-white print:text-black print:border-black print:border text-[10px] lg:text-xs font-bold px-4 py-1 rounded-b-xl shadow-md z-30 tracking-widest uppercase">ผู้สมัครนายกเทศมนตรี</div>';
                 
                 html += '<div class="flex justify-between items-center mt-3 lg:mt-5 relative"><div class="w-5/12 text-center z-10 relative">';
-                html += `<div class="w-14 h-14 sm:w-16 sm:h-16 lg:w-20 lg:h-20 mx-auto bg-gradient-to-br from-yellow-400 to-blue-500 text-white rounded-full flex items-center justify-center text-2xl sm:text-3xl lg:text-4xl font-black shadow-lg border-[3px] border-white relative">${m1Leading ? '<i class="fa-solid fa-crown absolute -top-3 sm:-top-4 -right-2 sm:-right-3 text-3xl sm:text-4xl text-yellow-300 drop-shadow-[0_2px_2px_rgba(0,0,0,0.5)] transform rotate-[15deg] z-30"></i>' : ''}${m1.number}</div>`;
-                html += `<h4 class="mt-1.5 sm:mt-2 font-bold text-slate-800 text-xs sm:text-sm lg:text-base truncate px-1">${m1.name}</h4><div class="text-2xl sm:text-3xl lg:text-5xl font-black text-blue-600 mt-0.5 tracking-tighter drop-shadow-sm">${m1.score.toLocaleString()}</div><div class="text-xs sm:text-sm font-bold text-slate-500 bg-slate-50 inline-block px-2 sm:px-3 rounded-full mt-1 border border-slate-100">${p1}%</div></div>`;
+                html += `<div class="w-14 h-14 sm:w-16 sm:h-16 lg:w-20 lg:h-20 mx-auto bg-gradient-to-br from-yellow-400 to-blue-500 print:from-white print:to-white print:border-black print:text-black text-white rounded-full flex items-center justify-center text-2xl sm:text-3xl lg:text-4xl font-black shadow-lg border-[3px] border-white relative">${m1Leading ? '<i class="fa-solid fa-crown absolute -top-3 sm:-top-4 -right-2 sm:-right-3 text-3xl sm:text-4xl text-yellow-300 print:text-black drop-shadow-[0_2px_2px_rgba(0,0,0,0.5)] print:drop-shadow-none transform rotate-[15deg] z-30"></i>' : ''}${m1.number}</div>`;
+                html += `<h4 class="mt-1.5 sm:mt-2 font-bold text-slate-800 print:text-black text-xs sm:text-sm lg:text-base truncate px-1">${m1.name}</h4><div class="text-2xl sm:text-3xl lg:text-5xl font-black text-blue-600 print:text-black mt-0.5 tracking-tighter drop-shadow-sm">${m1.score.toLocaleString()}</div><div class="text-xs sm:text-sm font-bold text-slate-500 print:text-black print:border-black bg-slate-50 print:bg-white inline-block px-2 sm:px-3 rounded-full mt-1 border border-slate-100">${p1}%</div></div>`;
                 
-                html += '<div class="absolute left-1/2 top-1/2 transform -translate-x-1/2 -translate-y-1/2 z-20 -mt-2 lg:mt-0"><div class="bg-slate-800 text-white font-black text-lg sm:text-xl lg:text-2xl italic w-10 h-10 sm:w-12 sm:h-12 lg:w-14 lg:h-14 flex items-center justify-center rounded-full shadow-xl border-[2px] sm:border-[3px] border-white">VS</div></div>';
+                html += '<div class="absolute left-1/2 top-1/2 transform -translate-x-1/2 -translate-y-1/2 z-20 -mt-2 lg:mt-0"><div class="bg-slate-800 print:bg-white print:text-black text-white font-black text-lg sm:text-xl lg:text-2xl italic w-10 h-10 sm:w-12 sm:h-12 lg:w-14 lg:h-14 flex items-center justify-center rounded-full shadow-xl print:shadow-none border-[2px] sm:border-[3px] border-white print:border-black">VS</div></div>';
                 
                 html += '<div class="w-5/12 text-center z-10 relative">';
-                html += `<div class="w-14 h-14 sm:w-16 sm:h-16 lg:w-20 lg:h-20 mx-auto bg-gradient-to-br from-orange-400 to-slate-500 text-white rounded-full flex items-center justify-center text-2xl sm:text-3xl lg:text-4xl font-black shadow-lg border-[3px] border-white relative">${m2Leading ? '<i class="fa-solid fa-crown absolute -top-3 sm:-top-4 -right-2 sm:-right-3 text-3xl sm:text-4xl text-yellow-400 drop-shadow-[0_2px_2px_rgba(0,0,0,0.5)] transform rotate-[15deg] z-30"></i>' : ''}${m2.number}</div>`;
-                html += `<h4 class="mt-1.5 sm:mt-2 font-bold text-slate-800 text-xs sm:text-sm lg:text-base truncate px-1">${m2.name}</h4><div class="text-2xl sm:text-3xl lg:text-5xl font-black text-orange-500 mt-0.5 tracking-tighter drop-shadow-sm">${m2.score.toLocaleString()}</div><div class="text-xs sm:text-sm font-bold text-slate-500 bg-slate-50 inline-block px-2 sm:px-3 rounded-full mt-1 border border-slate-100">${p2}%</div></div></div>`;
+                html += `<div class="w-14 h-14 sm:w-16 sm:h-16 lg:w-20 lg:h-20 mx-auto bg-gradient-to-br from-orange-400 to-slate-500 print:from-white print:to-white print:border-black print:text-black text-white rounded-full flex items-center justify-center text-2xl sm:text-3xl lg:text-4xl font-black shadow-lg border-[3px] border-white relative">${m2Leading ? '<i class="fa-solid fa-crown absolute -top-3 sm:-top-4 -right-2 sm:-right-3 text-3xl sm:text-4xl text-yellow-400 print:text-black drop-shadow-[0_2px_2px_rgba(0,0,0,0.5)] print:drop-shadow-none transform rotate-[15deg] z-30"></i>' : ''}${m2.number}</div>`;
+                html += `<h4 class="mt-1.5 sm:mt-2 font-bold text-slate-800 print:text-black text-xs sm:text-sm lg:text-base truncate px-1">${m2.name}</h4><div class="text-2xl sm:text-3xl lg:text-5xl font-black text-orange-500 print:text-black mt-0.5 tracking-tighter drop-shadow-sm">${m2.score.toLocaleString()}</div><div class="text-xs sm:text-sm font-bold text-slate-500 print:text-black print:border-black bg-slate-50 print:bg-white inline-block px-2 sm:px-3 rounded-full mt-1 border border-slate-100">${p2}%</div></div></div>`;
 
                 html += '<div class="mt-4 sm:mt-5 lg:mt-6 space-y-2 sm:space-y-3 w-full px-2 lg:px-8">';
-                html += `<div class="flex items-center gap-2 sm:gap-3"><div class="w-6 h-6 sm:w-8 sm:h-8 rounded-lg bg-blue-50 text-blue-700 flex items-center justify-center font-black text-sm sm:text-xl shadow-sm border border-blue-200 shrink-0">${m1.number}</div><div class="flex-1 h-4 sm:h-6 lg:h-8 bg-slate-100 rounded-full overflow-hidden shadow-inner border border-slate-200 relative"><div class="h-full bg-gradient-to-r from-yellow-400 to-blue-500 transition-all duration-1000 flex items-center pl-2 sm:pl-3" style="width: ${p1}%"></div></div><span class="w-16 sm:w-20 lg:w-28 text-right font-black text-blue-600 text-base sm:text-xl lg:text-2xl shrink-0">${m1.score.toLocaleString()}</span></div>`;
-                html += `<div class="flex items-center gap-2 sm:gap-3"><div class="w-6 h-6 sm:w-8 sm:h-8 rounded-lg bg-orange-50 text-orange-700 flex items-center justify-center font-black text-sm sm:text-xl shadow-sm border border-orange-200 shrink-0">${m2.number}</div><div class="flex-1 h-4 sm:h-6 lg:h-8 bg-slate-100 rounded-full overflow-hidden shadow-inner border border-slate-200 relative"><div class="h-full bg-gradient-to-r from-slate-500 to-orange-400 transition-all duration-1000 flex items-center pl-2 sm:pl-3" style="width: ${p2}%"></div></div><span class="w-16 sm:w-20 lg:w-28 text-right font-black text-orange-600 text-base sm:text-xl lg:text-2xl shrink-0">${m2.score.toLocaleString()}</span></div>`;
+                html += `<div class="flex items-center gap-2 sm:gap-3"><div class="w-6 h-6 sm:w-8 sm:h-8 rounded-lg bg-blue-50 text-blue-700 print:bg-white print:text-black print:border-black flex items-center justify-center font-black text-sm sm:text-xl shadow-sm border border-blue-200 shrink-0">${m1.number}</div><div class="flex-1 h-4 sm:h-6 lg:h-8 bg-slate-100 rounded-full overflow-hidden shadow-inner border border-slate-200 print:border-black relative"><div class="h-full bg-gradient-to-r from-yellow-400 to-blue-500 print:bg-black transition-all duration-1000 flex items-center pl-2 sm:pl-3" style="width: ${p1}%"></div></div><span class="w-16 sm:w-20 lg:w-28 text-right font-black text-blue-600 print:text-black text-base sm:text-xl lg:text-2xl shrink-0">${m1.score.toLocaleString()}</span></div>`;
+                html += `<div class="flex items-center gap-2 sm:gap-3"><div class="w-6 h-6 sm:w-8 sm:h-8 rounded-lg bg-orange-50 text-orange-700 print:bg-white print:text-black print:border-black flex items-center justify-center font-black text-sm sm:text-xl shadow-sm border border-orange-200 shrink-0">${m2.number}</div><div class="flex-1 h-4 sm:h-6 lg:h-8 bg-slate-100 rounded-full overflow-hidden shadow-inner border border-slate-200 print:border-black relative"><div class="h-full bg-gradient-to-r from-slate-500 to-orange-400 print:bg-black transition-all duration-1000 flex items-center pl-2 sm:pl-3" style="width: ${p2}%"></div></div><span class="w-16 sm:w-20 lg:w-28 text-right font-black text-orange-600 print:text-black text-base sm:text-xl lg:text-2xl shrink-0">${m2.score.toLocaleString()}</span></div>`;
                 html += '</div></div>';
 
-                html += '<div class="w-full lg:w-[40%] bg-slate-50/50 p-4 lg:p-6 flex flex-col justify-center gap-3 lg:gap-4 relative">';
+                html += '<div class="w-full lg:w-[40%] bg-slate-50/50 print:bg-white p-4 lg:p-6 flex flex-col justify-center gap-3 lg:gap-4 relative">';
                 html += '<div class="absolute right-0 bottom-0 text-8xl sm:text-[120px] text-slate-200 opacity-30 pointer-events-none -rotate-12 translate-x-4 translate-y-4 print:hidden"><i class="fa-solid fa-chart-simple"></i></div>';
                 
-                html += `<div class="bg-white rounded-xl p-2 sm:p-3 lg:p-4 border border-slate-200 shadow-sm relative z-10 hover:shadow-md transition-shadow"><h5 class="text-[11px] lg:text-xs font-bold text-slate-500 mb-1.5 sm:mb-2 flex justify-between items-center"><span class="bg-slate-100 px-1.5 sm:px-2 py-0.5 rounded text-slate-600"><i class="fa-solid fa-chart-bar mr-1"></i> เขต 1</span><span class="font-medium bg-slate-50 px-1.5 sm:px-2 py-0.5 rounded border border-slate-100">รวม <span class="font-bold text-slate-700">${tZ1.toLocaleString()}</span> เสียง</span></h5><div class="flex justify-between text-[10px] sm:text-xs lg:text-sm font-bold mb-1 sm:mb-1.5 px-1"><span class="text-blue-600 flex items-center gap-1">เบอร์ ${m1.number} <i class="fa-solid fa-caret-right text-[8px] sm:text-[10px] text-slate-300"></i> ${m1Z1.toLocaleString()}</span><span class="text-orange-600 flex items-center gap-1">${m2Z1.toLocaleString()} <i class="fa-solid fa-caret-left text-[8px] sm:text-[10px] text-slate-300"></i> เบอร์ ${m2.number}</span></div><div class="h-1.5 sm:h-2 w-full bg-slate-100 rounded-full flex overflow-hidden shadow-inner"><div class="h-full bg-blue-500" style="width: ${p1Z1}%"></div><div class="h-full bg-orange-400" style="width: ${p2Z1}%"></div></div></div>`;
+                html += `<div class="bg-white rounded-xl p-2 sm:p-3 lg:p-4 border border-slate-200 print:border-black shadow-sm relative z-10 hover:shadow-md transition-shadow"><h5 class="text-[11px] lg:text-xs font-bold text-slate-500 print:text-black mb-1.5 sm:mb-2 flex justify-between items-center"><span class="bg-slate-100 print:bg-transparent px-1.5 sm:px-2 py-0.5 rounded text-slate-600 print:text-black"><i class="fa-solid fa-chart-bar mr-1 print:hidden"></i> เขต 1</span><span class="font-medium bg-slate-50 print:bg-transparent px-1.5 sm:px-2 py-0.5 rounded border border-slate-100 print:border-none print:p-0">รวม <span class="font-bold text-slate-700 print:text-black">${tZ1.toLocaleString()}</span> เสียง</span></h5><div class="flex justify-between text-[10px] sm:text-xs lg:text-sm font-bold mb-1 sm:mb-1.5 px-1"><span class="text-blue-600 print:text-black flex items-center gap-1">เบอร์ ${m1.number} <i class="fa-solid fa-caret-right text-[8px] sm:text-[10px] text-slate-300 print:hidden"></i> ${m1Z1.toLocaleString()}</span><span class="text-orange-600 print:text-black flex items-center gap-1">${m2Z1.toLocaleString()} <i class="fa-solid fa-caret-left text-[8px] sm:text-[10px] text-slate-300 print:hidden"></i> เบอร์ ${m2.number}</span></div><div class="h-1.5 sm:h-2 w-full bg-slate-100 rounded-full flex overflow-hidden shadow-inner print:border print:border-black"><div class="h-full bg-blue-500 print:bg-black" style="width: ${p1Z1}%"></div><div class="h-full bg-orange-400 print:bg-gray-400" style="width: ${p2Z1}%"></div></div></div>`;
                 
-                html += `<div class="bg-white rounded-xl p-2 sm:p-3 lg:p-4 border border-slate-200 shadow-sm relative z-10 hover:shadow-md transition-shadow"><h5 class="text-[11px] lg:text-xs font-bold text-slate-500 mb-1.5 sm:mb-2 flex justify-between items-center"><span class="bg-slate-100 px-1.5 sm:px-2 py-0.5 rounded text-slate-600"><i class="fa-solid fa-chart-bar mr-1"></i> เขต 2</span><span class="font-medium bg-slate-50 px-1.5 sm:px-2 py-0.5 rounded border border-slate-100">รวม <span class="font-bold text-slate-700">${tZ2.toLocaleString()}</span> เสียง</span></h5><div class="flex justify-between text-[10px] sm:text-xs lg:text-sm font-bold mb-1 sm:mb-1.5 px-1"><span class="text-blue-600 flex items-center gap-1">เบอร์ ${m1.number} <i class="fa-solid fa-caret-right text-[8px] sm:text-[10px] text-slate-300"></i> ${m1Z2.toLocaleString()}</span><span class="text-orange-600 flex items-center gap-1">${m2Z2.toLocaleString()} <i class="fa-solid fa-caret-left text-[8px] sm:text-[10px] text-slate-300"></i> เบอร์ ${m2.number}</span></div><div class="h-1.5 sm:h-2 w-full bg-slate-100 rounded-full flex overflow-hidden shadow-inner"><div class="h-full bg-blue-500" style="width: ${p1Z2}%"></div><div class="h-full bg-orange-400" style="width: ${p2Z2}%"></div></div></div>`;
+                html += `<div class="bg-white rounded-xl p-2 sm:p-3 lg:p-4 border border-slate-200 print:border-black shadow-sm relative z-10 hover:shadow-md transition-shadow"><h5 class="text-[11px] lg:text-xs font-bold text-slate-500 print:text-black mb-1.5 sm:mb-2 flex justify-between items-center"><span class="bg-slate-100 print:bg-transparent px-1.5 sm:px-2 py-0.5 rounded text-slate-600 print:text-black"><i class="fa-solid fa-chart-bar mr-1 print:hidden"></i> เขต 2</span><span class="font-medium bg-slate-50 print:bg-transparent px-1.5 sm:px-2 py-0.5 rounded border border-slate-100 print:border-none print:p-0">รวม <span class="font-bold text-slate-700 print:text-black">${tZ2.toLocaleString()}</span> เสียง</span></h5><div class="flex justify-between text-[10px] sm:text-xs lg:text-sm font-bold mb-1 sm:mb-1.5 px-1"><span class="text-blue-600 print:text-black flex items-center gap-1">เบอร์ ${m1.number} <i class="fa-solid fa-caret-right text-[8px] sm:text-[10px] text-slate-300 print:hidden"></i> ${m1Z2.toLocaleString()}</span><span class="text-orange-600 print:text-black flex items-center gap-1">${m2Z2.toLocaleString()} <i class="fa-solid fa-caret-left text-[8px] sm:text-[10px] text-slate-300 print:hidden"></i> เบอร์ ${m2.number}</span></div><div class="h-1.5 sm:h-2 w-full bg-slate-100 rounded-full flex overflow-hidden shadow-inner print:border print:border-black"><div class="h-full bg-blue-500 print:bg-black" style="width: ${p1Z2}%"></div><div class="h-full bg-orange-400 print:bg-gray-400" style="width: ${p2Z2}%"></div></div></div>`;
                 
-                html += `<div class="flex flex-wrap justify-center gap-2 sm:gap-3 lg:gap-4 mt-1 text-[10px] sm:text-xs lg:text-sm font-bold text-slate-600 relative z-10"><span class="bg-white px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg border border-slate-200 shadow-sm flex items-center gap-1 sm:gap-1.5"><i class="fa-solid fa-ban text-slate-400"></i> ไม่ประสงค์: <span class="text-slate-800 text-xs sm:text-base">${mayorNoVote.toLocaleString()}</span></span><span class="bg-white px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg border border-red-200 shadow-sm flex items-center gap-1 sm:gap-1.5 text-red-600"><i class="fa-solid fa-triangle-exclamation"></i> บัตรเสีย: <span class="text-red-700 text-xs sm:text-base">${mayorInvalid.toLocaleString()}</span></span></div>`;
+                html += `<div class="flex flex-wrap justify-center gap-2 sm:gap-3 lg:gap-4 mt-1 text-[10px] sm:text-xs lg:text-sm font-bold text-slate-600 relative z-10"><span class="bg-white print:bg-transparent px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg border border-slate-200 print:border-black shadow-sm flex items-center gap-1 sm:gap-1.5"><i class="fa-solid fa-ban text-slate-400 print:hidden"></i> ไม่ประสงค์: <span class="text-slate-800 print:text-black text-xs sm:text-base">${mayorNoVote.toLocaleString()}</span></span><span class="bg-white print:bg-transparent px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg border border-red-200 print:border-black shadow-sm flex items-center gap-1 sm:gap-1.5 text-red-600 print:text-black"><i class="fa-solid fa-triangle-exclamation print:hidden"></i> บัตรเสีย: <span class="text-red-700 print:text-black text-xs sm:text-base">${mayorInvalid.toLocaleString()}</span></span></div>`;
                 html += '</div></div>';
             }
 
@@ -1209,7 +1418,7 @@
                 sortedByScore.forEach((c, idx) => { if (idx < 6 && c.score > 0) top6Ids.add(c.id); });
                 const sortedByNumber = [...resultsOriginal].sort((a, b) => a.number - b.number);
 
-                let sectionHtml = `<div class="${colorTheme.containerBg} rounded-2xl shadow-md border ${colorTheme.mainBorder} overflow-hidden flex flex-col relative flex-1 min-h-[350px] lg:min-h-0 transition-shadow hover:shadow-lg"><div class="absolute -right-4 sm:-right-8 -bottom-4 sm:-bottom-8 text-8xl sm:text-[150px] opacity-[0.03] ${colorTheme.iconBgColor} pointer-events-none rotate-[-15deg] print:hidden"><i class="${colorTheme.bgIcon}"></i></div><div class="bg-gradient-to-r ${colorTheme.headerBg} p-2 sm:p-2.5 lg:p-3 border-b ${colorTheme.headerBorder} flex items-center justify-between relative z-10"><div class="flex items-center gap-2 sm:gap-3 px-1"><div class="p-1 sm:p-1.5 ${colorTheme.iconWrapperBg} rounded-lg shadow-inner"><i class="${colorTheme.mainIcon} text-base sm:text-lg lg:text-xl text-white"></i></div><h3 class="text-sm sm:text-base lg:text-xl font-black ${colorTheme.titleText} tracking-wide">ส.ท. ${zoneName}</h3></div><div class="flex items-center gap-2 sm:gap-3"><span class="text-[8px] sm:text-[10px] lg:text-xs font-bold ${colorTheme.totalVotesText} ${colorTheme.totalVotesBg} px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-lg border shadow-sm backdrop-blur-sm">รวม <span class="text-xs sm:text-sm lg:text-base ml-1">${totalZoneVotes.toLocaleString()}</span></span></div></div><div class="p-2 sm:p-3 lg:p-4 flex-1 flex flex-col justify-center items-center relative z-10 bg-white/40 overflow-visible lg:overflow-y-auto"><div class="flex flex-wrap gap-1.5 sm:gap-2 lg:gap-3 justify-center items-center w-full sm:max-w-[95%]">`;
+                let sectionHtml = `<div class="${colorTheme.containerBg} print:bg-white rounded-2xl shadow-md border ${colorTheme.mainBorder} print:border-black overflow-hidden flex flex-col relative flex-1 min-h-[350px] lg:min-h-0 transition-shadow hover:shadow-lg"><div class="absolute -right-4 sm:-right-8 -bottom-4 sm:-bottom-8 text-8xl sm:text-[150px] opacity-[0.03] ${colorTheme.iconBgColor} pointer-events-none rotate-[-15deg] print:hidden"><i class="${colorTheme.bgIcon}"></i></div><div class="bg-gradient-to-r ${colorTheme.headerBg} print:bg-none print:bg-white p-2 sm:p-2.5 lg:p-3 border-b ${colorTheme.headerBorder} print:border-black flex items-center justify-between relative z-10"><div class="flex items-center gap-2 sm:gap-3 px-1"><div class="p-1 sm:p-1.5 ${colorTheme.iconWrapperBg} print:bg-transparent rounded-lg shadow-inner"><i class="${colorTheme.mainIcon} text-base sm:text-lg lg:text-xl text-white print:text-black"></i></div><h3 class="text-sm sm:text-base lg:text-xl font-black ${colorTheme.titleText} print:text-black tracking-wide">ส.ท. ${zoneName}</h3></div><div class="flex items-center gap-2 sm:gap-3"><span class="text-[8px] sm:text-[10px] lg:text-xs font-bold ${colorTheme.totalVotesText} print:text-black ${colorTheme.totalVotesBg} print:bg-transparent px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-lg border print:border-black shadow-sm backdrop-blur-sm">รวม <span class="text-xs sm:text-sm lg:text-base ml-1">${totalZoneVotes.toLocaleString()}</span></span></div></div><div class="p-2 sm:p-3 lg:p-4 flex-1 flex flex-col justify-center items-center relative z-10 bg-white/40 print:bg-transparent overflow-visible lg:overflow-y-auto"><div class="flex flex-wrap gap-1.5 sm:gap-2 lg:gap-3 justify-center items-center w-full sm:max-w-[95%]">`;
                 
                 sortedByNumber.forEach(c => {
                     const isElected = top6Ids.has(c.id);
@@ -1218,25 +1427,253 @@
                     else if (c.number >= 7 && c.number <= 12) { theme = { border: 'border-orange-400 shadow-orange-200 ring-2 ring-orange-50', numberText: 'text-orange-600', scoreBg: 'bg-gradient-to-r from-orange-100 to-slate-200 text-orange-800 border-orange-200', inactiveBorder: 'border-orange-200 opacity-70', inactiveText: 'text-orange-400' }; } 
                     else { theme = { border: 'border-purple-400 shadow-purple-200 ring-2 ring-purple-50', numberText: 'text-purple-600', scoreBg: 'bg-gradient-to-r from-purple-100 to-fuchsia-100 text-purple-800 border-purple-200', inactiveBorder: 'border-purple-200 opacity-70', inactiveText: 'text-purple-400' }; }
 
-                    if (isElected) { sectionHtml += `<div class="w-[3.5rem] h-[4rem] sm:w-[4rem] sm:h-[4.5rem] lg:w-[4.5rem] lg:h-[5.5rem] flex flex-col items-center justify-center bg-white border-[2px] sm:border-[3px] ${theme.border} rounded-lg sm:rounded-xl shadow-md transform hover:scale-105 transition-all relative"><div class="absolute -top-2 -right-2 sm:-top-3 sm:-right-2.5 lg:-top-3.5 lg:-right-2.5 z-20 drop-shadow-md transform rotate-[15deg]"><i class="fa-solid fa-trophy text-yellow-400 text-sm sm:text-base lg:text-xl drop-shadow-[0_2px_2px_rgba(0,0,0,0.3)]"></i></div><span class="text-xl sm:text-2xl lg:text-4xl font-black ${theme.numberText} leading-none mt-0.5 sm:mt-1">${c.number}</span><span class="text-[9px] sm:text-[10px] lg:text-[12px] font-extrabold mt-0.5 sm:mt-1 ${theme.scoreBg} px-1 sm:px-1.5 rounded w-[90%] text-center truncate shadow-inner border border-slate-200">${c.score.toLocaleString()}</span></div>`; } 
-                    else { sectionHtml += `<div class="w-[3.5rem] h-[4rem] sm:w-[4rem] sm:h-[4.5rem] lg:w-[4.5rem] lg:h-[5.5rem] flex flex-col items-center justify-center bg-white/80 border-[1px] ${theme.inactiveBorder} rounded-lg sm:rounded-xl hover:opacity-100 transition-all cursor-default relative"><span class="text-xl sm:text-2xl lg:text-4xl font-bold ${theme.inactiveText} leading-none mt-0.5 sm:mt-1">${c.number}</span><span class="text-[9px] sm:text-[10px] lg:text-[12px] font-medium text-slate-500 mt-0.5 sm:mt-1 px-1 w-[90%] text-center truncate">${c.score.toLocaleString()}</span></div>`; }
+                    if (isElected) { sectionHtml += `<div class="w-[3.5rem] h-[4rem] sm:w-[4rem] sm:h-[4.5rem] lg:w-[4.5rem] lg:h-[5.5rem] flex flex-col items-center justify-center bg-white border-[2px] sm:border-[3px] ${theme.border} print:border-black print:shadow-none rounded-lg sm:rounded-xl shadow-md transform hover:scale-105 transition-all relative"><div class="absolute -top-2 -right-2 sm:-top-3 sm:-right-2.5 lg:-top-3.5 lg:-right-2.5 z-20 drop-shadow-md transform rotate-[15deg]"><i class="fa-solid fa-trophy text-yellow-400 print:text-black text-sm sm:text-base lg:text-xl drop-shadow-[0_2px_2px_rgba(0,0,0,0.3)] print:drop-shadow-none"></i></div><span class="text-xl sm:text-2xl lg:text-4xl font-black ${theme.numberText} print:text-black leading-none mt-0.5 sm:mt-1">${c.number}</span><span class="text-[9px] sm:text-[10px] lg:text-[12px] font-extrabold mt-0.5 sm:mt-1 ${theme.scoreBg} print:bg-none print:text-black px-1 sm:px-1.5 rounded w-[90%] text-center truncate shadow-inner border border-slate-200 print:border-none">${c.score.toLocaleString()}</span></div>`; } 
+                    else { sectionHtml += `<div class="w-[3.5rem] h-[4rem] sm:w-[4rem] sm:h-[4.5rem] lg:w-[4.5rem] lg:h-[5.5rem] flex flex-col items-center justify-center bg-white/80 print:bg-white border-[1px] ${theme.inactiveBorder} print:border-gray-400 rounded-lg sm:rounded-xl hover:opacity-100 transition-all cursor-default relative"><span class="text-xl sm:text-2xl lg:text-4xl font-bold ${theme.inactiveText} print:text-gray-500 leading-none mt-0.5 sm:mt-1">${c.number}</span><span class="text-[9px] sm:text-[10px] lg:text-[12px] font-medium text-slate-500 print:text-gray-600 mt-0.5 sm:mt-1 px-1 w-[90%] text-center truncate">${c.score.toLocaleString()}</span></div>`; }
                 });
 
-                sectionHtml += `</div></div><div class="p-1.5 sm:p-2 bg-white/80 border-t ${colorTheme.mainBorder} relative z-10 flex justify-center gap-2 sm:gap-4 text-[8px] sm:text-[10px] lg:text-xs font-bold text-slate-600 backdrop-blur-sm"><span class="flex items-center gap-1 sm:gap-1.5"><i class="fa-solid fa-ban text-slate-400"></i> ไม่ประสงค์: <span class="text-slate-800 text-xs sm:text-sm lg:text-base">${cNoVote.toLocaleString()}</span></span><span class="flex items-center gap-1 sm:gap-1.5 text-red-600"><i class="fa-solid fa-triangle-exclamation"></i> บัตรเสีย: <span class="text-red-700 text-xs sm:text-sm lg:text-base">${cInvalid.toLocaleString()}</span></span></div></div>`;
+                sectionHtml += `</div></div><div class="p-1.5 sm:p-2 bg-white/80 print:bg-white border-t ${colorTheme.mainBorder} print:border-black relative z-10 flex justify-center gap-2 sm:gap-4 text-[8px] sm:text-[10px] lg:text-xs font-bold text-slate-600 print:text-black backdrop-blur-sm"><span class="flex items-center gap-1 sm:gap-1.5"><i class="fa-solid fa-ban text-slate-400 print:hidden"></i> ไม่ประสงค์: <span class="text-slate-800 print:text-black text-xs sm:text-sm lg:text-base">${cNoVote.toLocaleString()}</span></span><span class="flex items-center gap-1 sm:gap-1.5 text-red-600 print:text-black"><i class="fa-solid fa-triangle-exclamation print:hidden"></i> บัตรเสีย: <span class="text-red-700 print:text-black text-xs sm:text-sm lg:text-base">${cInvalid.toLocaleString()}</span></span></div></div>`;
                 return sectionHtml;
             };
 
-            html += '<div class="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-4 lg:gap-6 flex-1 min-h-0 w-full mt-1">';
+            html += '<div class="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-4 lg:gap-6 flex-shrink-0 w-full mt-1">';
             html += renderCouncilZone('เขตเลือกตั้งที่ 1', 1, councilZone1Results, totalCouncil1, { containerBg: 'bg-slate-50/60', mainBorder: 'border-slate-200', iconBgColor: 'text-slate-400', bgIcon: 'fa-solid fa-users-viewfinder', headerBg: 'from-slate-600 to-slate-700', headerBorder: 'border-slate-800', iconWrapperBg: 'bg-white/20 backdrop-blur-md', iconBorder: 'border-white/30', mainIcon: 'fa-solid fa-users', titleText: 'text-white', subtitleText: 'text-slate-200', totalVotesText: 'text-white', totalVotesBg: 'bg-slate-900/40 border-slate-400/30' });
             html += renderCouncilZone('เขตเลือกตั้งที่ 2', 2, councilZone2Results, totalCouncil2, { containerBg: 'bg-slate-50/60', mainBorder: 'border-slate-200', iconBgColor: 'text-slate-400', bgIcon: 'fa-solid fa-users-rectangle', headerBg: 'from-slate-600 to-slate-700', headerBorder: 'border-slate-800', iconWrapperBg: 'bg-white/20 backdrop-blur-md', iconBorder: 'border-white/30', mainIcon: 'fa-solid fa-users-rays', titleText: 'text-white', subtitleText: 'text-slate-200', totalVotesText: 'text-white', totalVotesBg: 'bg-slate-900/40 border-slate-400/30' });
-            html += '</div></div>'; 
+            html += '</div>'; // ปิด grid ของ ส.ท.
+
+            // ==========================================
+            // เพิ่มตารางรายงานผลรายหน่วย เมื่อปิดหีบครบ
+            // ==========================================
+            if (window.areAllStationsClosed()) {
+                html += window.renderFinalUnitReport();
+            }
+
+            html += '</div>'; // ปิด flex flex-col หลัก
+            return html;
+        }
+
+        window.renderAdminReport = function() {
+            const formatNum = (num) => num ? num.toLocaleString() : '0';
+            const nowTime = new Date().toLocaleTimeString('th-TH', {hour: '2-digit', minute:'2-digit'});
+            const nowDate = new Date().toLocaleDateString('th-TH', { year: 'numeric', month: 'long', day: 'numeric' });
+
+            let html = `
+            <div class="max-w-[297mm] mx-auto fade-in mt-2 mb-12 sm:mt-4 print:m-0 print:max-w-none">
+                <!-- Toolbar (Hidden on Print) -->
+                <div class="bg-white p-4 rounded-2xl shadow-sm border border-slate-200 mb-4 flex flex-col sm:flex-row justify-between items-center gap-4 print:hidden sticky top-2 z-50">
+                    <div class="flex items-center gap-3">
+                        <button onclick="changeTab('status')" class="w-10 h-10 rounded-full bg-slate-100 text-slate-600 hover:bg-slate-200 flex items-center justify-center transition-colors"><i class="fa-solid fa-arrow-left"></i></button>
+                        <div>
+                            <h2 class="font-black text-slate-800 text-lg">ส่งออกเอกสาร PDF</h2>
+                            <p class="text-xs text-slate-500">กรุณาตั้งค่าหน้ากระดาษเป็น "แนวนอน (Landscape)" ก่อนพิมพ์</p>
+                        </div>
+                    </div>
+                    <button onclick="window.print()" class="w-full sm:w-auto bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2.5 px-6 rounded-xl shadow-md transition-all flex items-center justify-center gap-2"><i class="fa-solid fa-print"></i> พิมพ์ / บันทึกเป็น PDF</button>
+                </div>
+
+                <!-- Printable Document Container -->
+                <div class="bg-white p-4 sm:p-8 rounded-none sm:rounded-2xl shadow-lg border-none sm:border border-slate-200 print:shadow-none print:border-none print:p-0">
+                    
+                    <!-- Header -->
+                    <div class="text-center mb-6 print:mb-4">
+                        <h1 class="text-xl sm:text-2xl font-black text-slate-900 mb-1">รายงานสรุปผลการนับคะแนนเลือกตั้ง (รายหน่วย)</h1>
+                        <h2 class="text-lg font-bold text-slate-700 mb-2">เทศบาลตำบลหนองบัวศาลา อำเภอเมือง จังหวัดนครราชสีมา</h2>
+                        <p class="text-sm text-slate-600">ข้อมูล ณ วันที่ ${nowDate} เวลา ${nowTime} น.</p>
+                    </div>
+
+                    <!-- Mayor Section -->
+                    <div class="mb-8 print:mb-6">
+                        <h3 class="font-bold text-lg text-slate-800 bg-slate-100 print:bg-transparent py-2 px-3 rounded-t-lg border-b-2 border-slate-800 mb-2 print:p-0"><i class="fa-solid fa-medal mr-2 print:hidden"></i>ผลการนับคะแนน นายกเทศมนตรี</h3>
+                        <div class="overflow-x-auto print:overflow-visible">
+                            <table class="w-full text-xs text-center border-collapse">
+                                <thead>
+                                    <tr class="bg-slate-50 print-bg-gray">
+                                        <th class="py-2 px-2 border border-slate-300 w-12">เขต</th>
+                                        <th class="py-2 px-2 border border-slate-300 w-12">หน่วย</th>
+                                        <th class="py-2 px-2 border border-slate-300">ผู้มีสิทธิ์</th>
+                                        <th class="py-2 px-2 border border-slate-300">ใช้สิทธิ์</th>
+                                        <th class="py-2 px-2 border border-slate-300">บัตรดี</th>
+                                        ${state.mayorCandidates.map(c => `<th class="py-2 px-2 border border-slate-300">เบอร์ ${c.number}<br><span class="text-[9px] font-normal">${c.name}</span></th>`).join('')}
+                                        <th class="py-2 px-2 border border-slate-300">ไม่ประสงค์</th>
+                                        <th class="py-2 px-2 border border-slate-300">บัตรเสีย</th>
+                                    </tr>
+                                </thead>
+                                <tbody>`;
+            
+            let mTotals = { el: 0, turnout: 0, valid: 0, novote: 0, invalid: 0, c: {} };
+            state.mayorCandidates.forEach(c => mTotals.c[c.id] = 0);
+
+            [1, 2].forEach(zone => {
+                getStationsForZone(zone).forEach(s => {
+                    const stats = getStationMayorStats(zone, s);
+                    mTotals.el += stats.eligible; mTotals.turnout += stats.turnout; mTotals.valid += stats.valid; mTotals.novote += stats.novote; mTotals.invalid += stats.invalid;
+                    
+                    html += `<tr>
+                                <td class="py-1.5 px-2 border border-slate-300 font-bold">${zone}</td>
+                                <td class="py-1.5 px-2 border border-slate-300 font-bold">${s}</td>
+                                <td class="py-1.5 px-2 border border-slate-300">${formatNum(stats.eligible)}</td>
+                                <td class="py-1.5 px-2 border border-slate-300">${formatNum(stats.turnout)}</td>
+                                <td class="py-1.5 px-2 border border-slate-300">${formatNum(stats.valid)}</td>`;
+                    state.mayorCandidates.forEach(c => {
+                        const score = parseInt(state.scores[`z${zone}_s${s}_candidate_${c.id}`] || 0);
+                        mTotals.c[c.id] += score;
+                        html += `<td class="py-1.5 px-2 border border-slate-300">${formatNum(score)}</td>`;
+                    });
+                    html += `   <td class="py-1.5 px-2 border border-slate-300">${formatNum(stats.novote)}</td>
+                                <td class="py-1.5 px-2 border border-slate-300">${formatNum(stats.invalid)}</td>
+                            </tr>`;
+                });
+            });
+
+            html += `               <tr class="font-bold bg-slate-100 print-bg-gray">
+                                        <td colspan="2" class="py-2 px-2 border border-slate-300">รวมทั้งหมด</td>
+                                        <td class="py-2 px-2 border border-slate-300">${formatNum(mTotals.el)}</td>
+                                        <td class="py-2 px-2 border border-slate-300">${formatNum(mTotals.turnout)}</td>
+                                        <td class="py-2 px-2 border border-slate-300">${formatNum(mTotals.valid)}</td>
+                                        ${state.mayorCandidates.map(c => `<td class="py-2 px-2 border border-slate-300">${formatNum(mTotals.c[c.id])}</td>`).join('')}
+                                        <td class="py-2 px-2 border border-slate-300">${formatNum(mTotals.novote)}</td>
+                                        <td class="py-2 px-2 border border-slate-300">${formatNum(mTotals.invalid)}</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Page Break for Printing -->
+                    <div class="print-page-break"></div>
+
+                    <!-- Council Zone 1 -->
+                    <div class="mb-8 print:mb-6 print:pt-4">
+                        <h3 class="font-bold text-lg text-slate-800 bg-slate-100 print:bg-transparent py-2 px-3 rounded-t-lg border-b-2 border-slate-800 mb-2 print:p-0"><i class="fa-solid fa-users mr-2 print:hidden"></i>ผลการนับคะแนน สมาชิกสภาเทศบาล (ส.ท.) - เขตเลือกตั้งที่ 1</h3>
+                        <div class="overflow-x-auto print:overflow-visible">
+                            <table class="w-full text-[10px] text-center border-collapse">
+                                <thead>
+                                    <tr class="bg-slate-50 print-bg-gray">
+                                        <th class="py-2 px-1 border border-slate-300 w-10">หน่วย</th>
+                                        <th class="py-2 px-1 border border-slate-300">ผู้มีสิทธิ์</th>
+                                        <th class="py-2 px-1 border border-slate-300">ใช้สิทธิ์</th>
+                                        ${state.councilCandidates[1].map(c => `<th class="py-2 px-1 border border-slate-300">บ.${c.number}</th>`).join('')}
+                                        <th class="py-2 px-1 border border-slate-300">ไม่ประสงค์</th>
+                                        <th class="py-2 px-1 border border-slate-300">บัตรเสีย</th>
+                                    </tr>
+                                </thead>
+                                <tbody>`;
+            
+            let c1Totals = { el: 0, turnout: 0, novote: 0, invalid: 0, c: {} };
+            state.councilCandidates[1].forEach(c => c1Totals.c[c.id] = 0);
+
+            getStationsForZone(1).forEach(s => {
+                const el = parseInt(state.scores[`z1_s${s}_eligible`] || 0);
+                const turnout = getStationMayorStats(1, s).turnout; // Base on mayor turnout
+                const novote = parseInt(state.scores[`z1_s${s}_council_novote`] || 0);
+                const invalid = parseInt(state.scores[`z1_s${s}_council_invalid`] || 0);
+                
+                c1Totals.el += el; c1Totals.turnout += turnout; c1Totals.novote += novote; c1Totals.invalid += invalid;
+
+                html += `<tr>
+                            <td class="py-1.5 px-1 border border-slate-300 font-bold">${s}</td>
+                            <td class="py-1.5 px-1 border border-slate-300">${formatNum(el)}</td>
+                            <td class="py-1.5 px-1 border border-slate-300">${formatNum(turnout)}</td>`;
+                state.councilCandidates[1].forEach(c => {
+                    const score = parseInt(state.scores[`z1_s${s}_candidate_${c.id}`] || 0);
+                    c1Totals.c[c.id] += score;
+                    html += `<td class="py-1.5 px-1 border border-slate-300">${formatNum(score)}</td>`;
+                });
+                html += `   <td class="py-1.5 px-1 border border-slate-300">${formatNum(novote)}</td>
+                            <td class="py-1.5 px-1 border border-slate-300">${formatNum(invalid)}</td>
+                        </tr>`;
+            });
+
+            html += `               <tr class="font-bold bg-slate-100 print-bg-gray">
+                                        <td class="py-2 px-1 border border-slate-300">รวม</td>
+                                        <td class="py-2 px-1 border border-slate-300">${formatNum(c1Totals.el)}</td>
+                                        <td class="py-2 px-1 border border-slate-300">${formatNum(c1Totals.turnout)}</td>
+                                        ${state.councilCandidates[1].map(c => `<td class="py-2 px-1 border border-slate-300">${formatNum(c1Totals.c[c.id])}</td>`).join('')}
+                                        <td class="py-2 px-1 border border-slate-300">${formatNum(c1Totals.novote)}</td>
+                                        <td class="py-2 px-1 border border-slate-300">${formatNum(c1Totals.invalid)}</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Page Break for Printing -->
+                    <div class="print-page-break"></div>
+
+                    <!-- Council Zone 2 -->
+                    <div class="mb-4 print:mb-0 print:pt-4">
+                        <h3 class="font-bold text-lg text-slate-800 bg-slate-100 print:bg-transparent py-2 px-3 rounded-t-lg border-b-2 border-slate-800 mb-2 print:p-0"><i class="fa-solid fa-users mr-2 print:hidden"></i>ผลการนับคะแนน สมาชิกสภาเทศบาล (ส.ท.) - เขตเลือกตั้งที่ 2</h3>
+                        <div class="overflow-x-auto print:overflow-visible">
+                            <table class="w-full text-[10px] text-center border-collapse">
+                                <thead>
+                                    <tr class="bg-slate-50 print-bg-gray">
+                                        <th class="py-2 px-1 border border-slate-300 w-10">หน่วย</th>
+                                        <th class="py-2 px-1 border border-slate-300">ผู้มีสิทธิ์</th>
+                                        <th class="py-2 px-1 border border-slate-300">ใช้สิทธิ์</th>
+                                        ${state.councilCandidates[2].map(c => `<th class="py-2 px-1 border border-slate-300">บ.${c.number}</th>`).join('')}
+                                        <th class="py-2 px-1 border border-slate-300">ไม่ประสงค์</th>
+                                        <th class="py-2 px-1 border border-slate-300">บัตรเสีย</th>
+                                    </tr>
+                                </thead>
+                                <tbody>`;
+            
+            let c2Totals = { el: 0, turnout: 0, novote: 0, invalid: 0, c: {} };
+            state.councilCandidates[2].forEach(c => c2Totals.c[c.id] = 0);
+
+            getStationsForZone(2).forEach(s => {
+                const el = parseInt(state.scores[`z2_s${s}_eligible`] || 0);
+                const turnout = getStationMayorStats(2, s).turnout;
+                const novote = parseInt(state.scores[`z2_s${s}_council_novote`] || 0);
+                const invalid = parseInt(state.scores[`z2_s${s}_council_invalid`] || 0);
+                
+                c2Totals.el += el; c2Totals.turnout += turnout; c2Totals.novote += novote; c2Totals.invalid += invalid;
+
+                html += `<tr>
+                            <td class="py-1.5 px-1 border border-slate-300 font-bold">${s}</td>
+                            <td class="py-1.5 px-1 border border-slate-300">${formatNum(el)}</td>
+                            <td class="py-1.5 px-1 border border-slate-300">${formatNum(turnout)}</td>`;
+                state.councilCandidates[2].forEach(c => {
+                    const score = parseInt(state.scores[`z2_s${s}_candidate_${c.id}`] || 0);
+                    c2Totals.c[c.id] += score;
+                    html += `<td class="py-1.5 px-1 border border-slate-300">${formatNum(score)}</td>`;
+                });
+                html += `   <td class="py-1.5 px-1 border border-slate-300">${formatNum(novote)}</td>
+                            <td class="py-1.5 px-1 border border-slate-300">${formatNum(invalid)}</td>
+                        </tr>`;
+            });
+
+            html += `               <tr class="font-bold bg-slate-100 print-bg-gray">
+                                        <td class="py-2 px-1 border border-slate-300">รวม</td>
+                                        <td class="py-2 px-1 border border-slate-300">${formatNum(c2Totals.el)}</td>
+                                        <td class="py-2 px-1 border border-slate-300">${formatNum(c2Totals.turnout)}</td>
+                                        ${state.councilCandidates[2].map(c => `<td class="py-2 px-1 border border-slate-300">${formatNum(c2Totals.c[c.id])}</td>`).join('')}
+                                        <td class="py-2 px-1 border border-slate-300">${formatNum(c2Totals.novote)}</td>
+                                        <td class="py-2 px-1 border border-slate-300">${formatNum(c2Totals.invalid)}</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    
+                    <div class="mt-8 pt-4 border-t border-slate-300 hidden print:flex justify-end gap-16">
+                        <div class="text-center w-48">
+                            <p class="mb-12 border-b border-black"></p>
+                            <p class="text-xs">ผู้พิมพ์รายงาน</p>
+                        </div>
+                        <div class="text-center w-48">
+                            <p class="mb-12 border-b border-black"></p>
+                            <p class="text-xs">ผู้ตรวจสอบ/รับรอง</p>
+                        </div>
+                    </div>
+
+                </div>
+            </div>`;
             return html;
         }
 
         window.renderStatus = function() {
             let html = `
                 <div class="w-full max-w-[1920px] mx-auto fade-in mt-2 sm:mt-4 px-2 lg:px-4 h-auto lg:h-[calc(100vh-5.5rem)] flex flex-col min-h-[600px]">
-                    <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-3 sm:p-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 shrink-0 mb-3 sm:mb-4">
+                    <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-3 sm:p-4 flex flex-col md:flex-row justify-between items-start md:items-center gap-3 shrink-0 mb-3 sm:mb-4">
                         <div class="flex items-center gap-3">
                             <div class="bg-indigo-600 p-2 sm:p-2.5 rounded-xl text-white shadow-sm">
                                 <i class="fa-solid fa-tower-broadcast text-lg sm:text-xl"></i>
@@ -1247,11 +1684,17 @@
                             </div>
                         </div>
                         
-                        <div class="flex flex-wrap items-center gap-2 text-[9px] sm:text-[10px] font-bold bg-slate-50 px-2 sm:px-3 py-1.5 sm:py-2 rounded-lg border border-slate-200">
-                            <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-indigo-600"></span> ปิดหีบแล้ว</span>
-                            <span class="flex items-center gap-1 ml-1 sm:ml-2"><span class="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span> อัปเดต (<15น.)</span>
-                            <span class="flex items-center gap-1 ml-1 sm:ml-2"><span class="w-2.5 h-2.5 rounded-full bg-amber-500"></span> นานแล้ว</span>
-                            <span class="flex items-center gap-1 ml-1 sm:ml-2"><span class="w-2.5 h-2.5 rounded-full bg-slate-300"></span> รอข้อมูล</span>
+                        <div class="flex flex-col items-end gap-2 w-full md:w-auto">
+                            <div class="flex flex-wrap gap-2 w-full md:w-auto">
+                                <button onclick="openElectionAction()" class="flex-1 md:flex-none bg-emerald-500 hover:bg-emerald-600 text-white px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold shadow-sm transition-all active:scale-95 flex items-center justify-center gap-1.5 border-b-2 border-emerald-700"><i class="fa-solid fa-box-open"></i> เปิดหีบ (เริ่มใหม่)</button>
+                                <button onclick="changeTab('adminReport')" class="flex-1 md:flex-none bg-rose-500 hover:bg-rose-600 text-white px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold shadow-sm transition-all active:scale-95 flex items-center justify-center gap-1.5 border-b-2 border-rose-700"><i class="fa-solid fa-file-pdf"></i> ปิดหีบ / สรุปผล PDF</button>
+                            </div>
+                            <div class="flex flex-wrap items-center gap-2 text-[9px] sm:text-[10px] font-bold bg-slate-50 px-2 sm:px-3 py-1.5 sm:py-2 rounded-lg border border-slate-200 w-full md:w-auto justify-center md:justify-end">
+                                <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-indigo-600"></span> ปิดหีบแล้ว</span>
+                                <span class="flex items-center gap-1 ml-1 sm:ml-2"><span class="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span> อัปเดต (<15น.)</span>
+                                <span class="flex items-center gap-1 ml-1 sm:ml-2"><span class="w-2.5 h-2.5 rounded-full bg-amber-500"></span> นานแล้ว</span>
+                                <span class="flex items-center gap-1 ml-1 sm:ml-2"><span class="w-2.5 h-2.5 rounded-full bg-slate-300"></span> รอข้อมูล</span>
+                            </div>
                         </div>
                     </div>
 
@@ -1369,7 +1812,7 @@
 
                             <div>
                                 <label class="block text-xs sm:text-sm font-bold text-slate-700 mb-1.5 sm:mb-2">จำนวนผู้มีสิทธิ์เลือกตั้ง (คน)</label>
-                                <input type="number" id="init_eligible" min="0" class="w-full border-slate-300 rounded-xl shadow-sm focus:border-indigo-500 focus:ring-indigo-500 p-3 sm:p-4 border bg-slate-50 font-black text-center text-2xl sm:text-3xl text-indigo-700" placeholder="0" />
+                                <input type="number" id="init_eligible" min="0" onfocus="this.select()" class="w-full border-slate-300 rounded-xl shadow-sm focus:border-indigo-500 focus:ring-indigo-500 p-3 sm:p-4 border bg-slate-50 font-black text-center text-2xl sm:text-3xl text-indigo-700" placeholder="0" />
                             </div>
 
                             <button onclick="promptStaffInit()" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 sm:py-4 px-4 rounded-xl shadow-md transition-all text-base sm:text-lg flex items-center justify-center gap-2">
@@ -1396,26 +1839,26 @@
 
             let html = `<div class="max-w-2xl mx-auto fade-in pb-32 sm:pb-0"><div id="staff-timer-display" class="mb-3 sm:mb-4 sticky top-[56px] lg:top-[72px] z-20 px-2 sm:px-0"></div><div class="bg-white rounded-none sm:rounded-3xl shadow-lg border-y sm:border border-slate-100 overflow-hidden"><div class="bg-gradient-to-br from-indigo-700 to-blue-800 p-4 sm:p-6 md:p-8 text-white relative overflow-hidden"><div class="absolute -right-6 -top-6 sm:-right-10 sm:-top-10 text-white/10 text-[80px] sm:text-[120px]"><i class="fa-solid fa-clipboard-check"></i></div><div class="relative z-10"><div class="inline-flex items-center gap-1.5 sm:gap-2 bg-white/20 backdrop-blur-sm px-3 sm:px-4 py-1.5 sm:py-2 rounded-xl text-[10px] sm:text-xs font-bold mb-3 sm:mb-4 border border-white/30 flex-wrap"><span class="flex items-center gap-1"><i class="fa-solid fa-user-check"></i> เจ้าหน้าที่กรอกคะแนน</span><span class="w-px h-3 sm:h-4 bg-white/30 hidden sm:block"></span><span class="flex items-center gap-1 text-yellow-300"><i class="fa-solid fa-rotate"></i> นับครั้งที่: ${submitCount}</span><span class="w-px h-3 sm:h-4 bg-white/30 hidden sm:block"></span><span class="flex items-center gap-1 text-emerald-200"><i class="fa-solid fa-clock"></i> ล่าสุด: ${lastSubmitTime} น.</span></div><h2 class="text-xl sm:text-2xl md:text-3xl font-bold mb-1 sm:mb-2 leading-tight truncate">${name}</h2><p class="text-indigo-100 text-sm sm:text-lg md:text-xl font-medium flex items-center gap-1.5 sm:gap-2 mt-1 sm:mt-2"><i class="fa-solid fa-map-location-dot"></i> ประจำหน่วยเลือกตั้งที่ ${station} (เขต ${zone})</p></div></div>`;
             html += `<div class="p-3 sm:p-4 md:p-6 bg-slate-50 border-b border-slate-200 flex items-center gap-2 sm:gap-3"><div class="bg-indigo-100 text-indigo-700 w-8 h-8 sm:w-10 sm:h-10 rounded-lg sm:rounded-xl flex items-center justify-center flex-shrink-0"><i class="fa-solid fa-pen-nib text-sm sm:text-lg"></i></div><p class="text-xs sm:text-sm md:text-base font-bold text-slate-700 leading-tight">กรอก <span class="text-indigo-600">"ยอดสะสมล่าสุด"</span> ในช่องด้านล่าง แล้วกดบันทึก</p></div><div class="p-3 sm:p-4 md:p-8 space-y-6 sm:space-y-8">`;
-            html += `<div class="mb-6 sm:mb-8"><h3 class="font-extrabold text-lg sm:text-xl md:text-2xl text-slate-700 mb-3 sm:mb-4 flex items-center gap-2 pb-2 border-b-2 border-slate-200"><i class="fa-solid fa-users"></i> ข้อมูลหน่วยเลือกตั้ง</h3><div class="flex flex-col sm:flex-row items-start sm:items-center p-3 sm:p-4 bg-white rounded-2xl border-2 border-slate-100 focus-within:border-indigo-400 focus-within:ring-4 focus-within:ring-indigo-50 transition-all shadow-sm gap-2 sm:gap-0"><div class="flex items-center gap-3 w-full sm:w-auto sm:flex-1"><div class="w-10 h-10 sm:w-12 sm:h-12 bg-indigo-50 rounded-xl flex items-center justify-center text-indigo-500 flex-shrink-0"><i class="fa-solid fa-id-card text-xl sm:text-2xl"></i></div><div class="flex-1"><h4 class="font-bold text-slate-800 text-sm sm:text-base md:text-lg">จำนวนผู้มีสิทธิ์เลือกตั้ง (คน)</h4></div></div><div class="w-full sm:w-28 md:w-32 flex-shrink-0 relative mt-2 sm:mt-0"><input type="number" min="0" id="input_eligible" value="${eligibleVoters}" oninput="handleDraftInput(this.id, this.value)" class="w-full text-right bg-slate-50 border border-slate-200 rounded-xl p-3 md:p-4 font-black text-xl sm:text-2xl text-indigo-600 focus:outline-none focus:bg-white" placeholder="0" /></div></div></div>`;
+            html += `<div class="mb-6 sm:mb-8"><h3 class="font-extrabold text-lg sm:text-xl md:text-2xl text-slate-700 mb-3 sm:mb-4 flex items-center gap-2 pb-2 border-b-2 border-slate-200"><i class="fa-solid fa-users"></i> ข้อมูลหน่วยเลือกตั้ง</h3><div class="flex flex-col sm:flex-row items-start sm:items-center p-3 sm:p-4 bg-white rounded-2xl border-2 border-slate-100 focus-within:border-indigo-400 focus-within:ring-4 focus-within:ring-indigo-50 transition-all shadow-sm gap-2 sm:gap-0"><div class="flex items-center gap-3 w-full sm:w-auto sm:flex-1"><div class="w-10 h-10 sm:w-12 sm:h-12 bg-indigo-50 rounded-xl flex items-center justify-center text-indigo-500 flex-shrink-0"><i class="fa-solid fa-id-card text-xl sm:text-2xl"></i></div><div class="flex-1"><h4 class="font-bold text-slate-800 text-sm sm:text-base md:text-lg">จำนวนผู้มีสิทธิ์เลือกตั้ง (คน)</h4></div></div><div class="w-full sm:w-28 md:w-32 flex-shrink-0 relative mt-2 sm:mt-0"><input type="number" min="0" id="input_eligible" value="${eligibleVoters}" oninput="handleDraftInput(this.id, this.value)" onfocus="this.select()" class="w-full text-right bg-slate-50 border border-slate-200 rounded-xl p-3 md:p-4 font-black text-xl sm:text-2xl text-indigo-600 focus:outline-none focus:bg-white" placeholder="0" /></div></div></div>`;
             
             html += `<div><h3 class="font-extrabold text-lg sm:text-xl md:text-2xl text-amber-600 mb-3 sm:mb-4 flex items-center gap-2 pb-2 border-b-2 border-amber-100"><i class="fa-solid fa-medal"></i> นายกเทศมนตรี</h3><div class="space-y-2 sm:space-y-3">`;
             state.mayorCandidates.forEach(c => {
                 const val = draftScores[`input_m_${c.id}`] !== undefined ? draftScores[`input_m_${c.id}`] : (state.scores[`z${zone}_s${station}_candidate_${c.id}`] || '');
-                html += `<div class="flex flex-row items-center p-3 sm:p-4 bg-white rounded-2xl border-2 border-slate-100 focus-within:border-amber-400 focus-within:ring-4 focus-within:ring-amber-50 transition-all shadow-sm gap-3"><div class="w-10 h-10 sm:w-12 sm:h-12 md:w-14 md:h-14 bg-slate-100 rounded-xl flex items-center justify-center font-black text-lg sm:text-xl md:text-2xl text-slate-600 flex-shrink-0">${c.number}</div><div class="flex-1 min-w-0 pr-2"><h4 class="font-bold text-slate-800 text-sm md:text-lg leading-tight break-words">${c.name}</h4></div><div class="w-24 sm:w-28 md:w-32 flex-shrink-0"><input type="number" min="0" id="input_m_${c.id}" value="${val}" oninput="handleDraftInput(this.id, this.value)" class="w-full text-right bg-slate-50 border border-slate-200 rounded-xl p-2.5 sm:p-3 md:p-4 font-black text-lg sm:text-2xl md:text-3xl text-amber-600 focus:outline-none focus:bg-white" placeholder="0" /></div></div>`;
+                html += `<div class="flex flex-row items-center p-3 sm:p-4 bg-white rounded-2xl border-2 border-slate-100 focus-within:border-amber-400 focus-within:ring-4 focus-within:ring-amber-50 transition-all shadow-sm gap-3"><div class="w-10 h-10 sm:w-12 sm:h-12 md:w-14 md:h-14 bg-slate-100 rounded-xl flex items-center justify-center font-black text-lg sm:text-xl md:text-2xl text-slate-600 flex-shrink-0">${c.number}</div><div class="flex-1 min-w-0 pr-2"><h4 class="font-bold text-slate-800 text-sm md:text-lg leading-tight break-words">${c.name}</h4></div><div class="w-24 sm:w-28 md:w-32 flex-shrink-0"><input type="number" min="0" id="input_m_${c.id}" value="${val}" oninput="handleDraftInput(this.id, this.value)" onfocus="this.select()" class="w-full text-right bg-slate-50 border border-slate-200 rounded-xl p-2.5 sm:p-3 md:p-4 font-black text-lg sm:text-2xl md:text-3xl text-amber-600 focus:outline-none focus:bg-white" placeholder="0" /></div></div>`;
             });
             const mNoVote = draftScores['input_m_novote'] !== undefined ? draftScores['input_m_novote'] : (state.scores[`z${zone}_s${station}_mayor_novote`] || '');
             const mInvalid = draftScores['input_m_invalid'] !== undefined ? draftScores['input_m_invalid'] : (state.scores[`z${zone}_s${station}_mayor_invalid`] || '');
-            html += `<div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4"><div class="bg-slate-50 p-3 rounded-xl border border-slate-200 flex items-center justify-between"><label class="text-xs sm:text-sm font-bold text-slate-500 flex items-center gap-1.5"><i class="fa-solid fa-ban"></i> ไม่ประสงค์ลงคะแนน</label><div class="w-20 sm:w-24 flex-shrink-0"><input type="number" min="0" id="input_m_novote" value="${mNoVote}" oninput="handleDraftInput(this.id, this.value)" class="w-full text-right bg-white border border-slate-300 rounded-lg p-2 font-bold text-lg sm:text-xl text-slate-700 focus:outline-none focus:border-slate-500" placeholder="0"></div></div><div class="bg-red-50 p-3 rounded-xl border border-red-100 flex items-center justify-between"><label class="text-xs sm:text-sm font-bold text-red-500 flex items-center gap-1.5"><i class="fa-solid fa-triangle-exclamation"></i> บัตรเสีย</label><div class="w-20 sm:w-24 flex-shrink-0"><input type="number" min="0" id="input_m_invalid" value="${mInvalid}" oninput="handleDraftInput(this.id, this.value)" class="w-full text-right bg-white border border-red-200 rounded-lg p-2 font-bold text-lg sm:text-xl text-red-600 focus:outline-none focus:border-red-400" placeholder="0"></div></div></div></div></div>`;
+            html += `<div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4"><div class="bg-slate-50 p-3 rounded-xl border border-slate-200 flex items-center justify-between"><label class="text-xs sm:text-sm font-bold text-slate-500 flex items-center gap-1.5"><i class="fa-solid fa-ban"></i> ไม่ประสงค์ลงคะแนน</label><div class="w-20 sm:w-24 flex-shrink-0"><input type="number" min="0" id="input_m_novote" value="${mNoVote}" oninput="handleDraftInput(this.id, this.value)" onfocus="this.select()" class="w-full text-right bg-white border border-slate-300 rounded-lg p-2 font-bold text-lg sm:text-xl text-slate-700 focus:outline-none focus:border-slate-500" placeholder="0"></div></div><div class="bg-red-50 p-3 rounded-xl border border-red-100 flex items-center justify-between"><label class="text-xs sm:text-sm font-bold text-red-500 flex items-center gap-1.5"><i class="fa-solid fa-triangle-exclamation"></i> บัตรเสีย</label><div class="w-20 sm:w-24 flex-shrink-0"><input type="number" min="0" id="input_m_invalid" value="${mInvalid}" oninput="handleDraftInput(this.id, this.value)" onfocus="this.select()" class="w-full text-right bg-white border border-red-200 rounded-lg p-2 font-bold text-lg sm:text-xl text-red-600 focus:outline-none focus:border-red-400" placeholder="0"></div></div></div></div></div>`;
             
             html += `<div><h3 class="font-extrabold text-lg sm:text-xl md:text-2xl text-blue-600 mb-3 sm:mb-4 flex items-center gap-2 pb-2 border-b-2 border-blue-100 mt-6 sm:mt-8"><i class="fa-solid fa-users"></i> สมาชิกสภาเทศบาล (ส.ท.)</h3><div class="space-y-2 sm:space-y-3">`;
             state.councilCandidates[zone].forEach(c => {
                 const val = draftScores[`input_c_${c.id}`] !== undefined ? draftScores[`input_c_${c.id}`] : (state.scores[`z${zone}_s${station}_candidate_${c.id}`] || '');
-                html += `<div class="flex flex-row items-center p-3 sm:p-4 bg-white rounded-2xl border-2 border-slate-100 focus-within:border-blue-400 focus-within:ring-4 focus-within:ring-blue-50 transition-all shadow-sm gap-3"><div class="w-10 h-10 sm:w-12 sm:h-12 md:w-14 md:h-14 bg-slate-100 rounded-xl flex items-center justify-center font-black text-lg sm:text-xl md:text-2xl text-slate-600 flex-shrink-0">${c.number}</div><div class="flex-1 min-w-0 pr-2"><h4 class="font-bold text-slate-800 text-sm md:text-base leading-tight break-words">${c.name}</h4></div><div class="w-20 sm:w-24 md:w-28 flex-shrink-0"><input type="number" min="0" id="input_c_${c.id}" value="${val}" oninput="handleDraftInput(this.id, this.value)" class="w-full text-right bg-slate-50 border border-slate-200 rounded-xl p-2.5 sm:p-3 md:p-3 font-bold text-lg sm:text-xl md:text-2xl text-blue-600 focus:outline-none focus:bg-white" placeholder="0" /></div></div>`;
+                html += `<div class="flex flex-row items-center p-3 sm:p-4 bg-white rounded-2xl border-2 border-slate-100 focus-within:border-blue-400 focus-within:ring-4 focus-within:ring-blue-50 transition-all shadow-sm gap-3"><div class="w-10 h-10 sm:w-12 sm:h-12 md:w-14 md:h-14 bg-slate-100 rounded-xl flex items-center justify-center font-black text-lg sm:text-xl md:text-2xl text-slate-600 flex-shrink-0">${c.number}</div><div class="flex-1 min-w-0 pr-2"><h4 class="font-bold text-slate-800 text-sm md:text-base leading-tight break-words">${c.name}</h4></div><div class="w-20 sm:w-24 md:w-28 flex-shrink-0"><input type="number" min="0" id="input_c_${c.id}" value="${val}" oninput="handleDraftInput(this.id, this.value)" onfocus="this.select()" class="w-full text-right bg-slate-50 border border-slate-200 rounded-xl p-2.5 sm:p-3 md:p-3 font-bold text-lg sm:text-xl md:text-2xl text-blue-600 focus:outline-none focus:bg-white" placeholder="0" /></div></div>`;
             });
             const cNoVote = draftScores['input_c_novote'] !== undefined ? draftScores['input_c_novote'] : (state.scores[`z${zone}_s${station}_council_novote`] || '');
             const cInvalid = draftScores['input_c_invalid'] !== undefined ? draftScores['input_c_invalid'] : (state.scores[`z${zone}_s${station}_council_invalid`] || '');
             
-            html += `<div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4"><div class="bg-slate-50 p-3 rounded-xl border border-slate-200 flex items-center justify-between"><label class="text-xs sm:text-sm font-bold text-slate-500 flex items-center gap-1.5"><i class="fa-solid fa-ban"></i> ไม่ประสงค์ลงคะแนน</label><div class="w-20 sm:w-24 flex-shrink-0"><input type="number" min="0" id="input_c_novote" value="${cNoVote}" oninput="handleDraftInput(this.id, this.value)" class="w-full text-right bg-white border border-slate-300 rounded-lg p-2 font-bold text-lg sm:text-xl text-slate-700 focus:outline-none focus:border-slate-500" placeholder="0"></div></div><div class="bg-red-50 p-3 rounded-xl border border-red-100 flex items-center justify-between"><label class="text-xs sm:text-sm font-bold text-red-500 flex items-center gap-1.5"><i class="fa-solid fa-triangle-exclamation"></i> บัตรเสีย</label><div class="w-20 sm:w-24 flex-shrink-0"><input type="number" min="0" id="input_c_invalid" value="${cInvalid}" oninput="handleDraftInput(this.id, this.value)" class="w-full text-right bg-white border border-red-200 rounded-lg p-2 font-bold text-lg sm:text-xl text-red-600 focus:outline-none focus:border-red-400" placeholder="0"></div></div></div></div></div>`;
+            html += `<div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4"><div class="bg-slate-50 p-3 rounded-xl border border-slate-200 flex items-center justify-between"><label class="text-xs sm:text-sm font-bold text-slate-500 flex items-center gap-1.5"><i class="fa-solid fa-ban"></i> ไม่ประสงค์ลงคะแนน</label><div class="w-20 sm:w-24 flex-shrink-0"><input type="number" min="0" id="input_c_novote" value="${cNoVote}" oninput="handleDraftInput(this.id, this.value)" onfocus="this.select()" class="w-full text-right bg-white border border-slate-300 rounded-lg p-2 font-bold text-lg sm:text-xl text-slate-700 focus:outline-none focus:border-slate-500" placeholder="0"></div></div><div class="bg-red-50 p-3 rounded-xl border border-red-100 flex items-center justify-between"><label class="text-xs sm:text-sm font-bold text-red-500 flex items-center gap-1.5"><i class="fa-solid fa-triangle-exclamation"></i> บัตรเสีย</label><div class="w-20 sm:w-24 flex-shrink-0"><input type="number" min="0" id="input_c_invalid" value="${cInvalid}" oninput="handleDraftInput(this.id, this.value)" onfocus="this.select()" class="w-full text-right bg-white border border-red-200 rounded-lg p-2 font-bold text-lg sm:text-xl text-red-600 focus:outline-none focus:border-red-400" placeholder="0"></div></div></div></div></div>`;
             
             html += `<div class="fixed sm:sticky bottom-16 sm:bottom-4 pb-safe sm:pb-0 pt-3 sm:pt-4 z-30 flex flex-col sm:flex-row gap-2 sm:gap-3 bg-white sm:bg-transparent -mx-4 px-4 sm:mx-0 sm:px-0 left-0 w-full sm:w-auto shadow-[0_-5px_15px_-10px_rgba(0,0,0,0.1)] sm:shadow-none border-t border-slate-200 sm:border-none items-center"><button id="btn-close-station" onclick="saveStaffScores(true)" class="w-full sm:w-1/3 bg-rose-500 hover:bg-rose-600 text-white font-bold py-2.5 sm:py-3 px-3 rounded-lg sm:rounded-xl shadow-sm flex items-center justify-center gap-1.5 transition-transform active:scale-95 text-xs sm:text-sm border-b-[3px] border-rose-700 order-2 sm:order-1 opacity-90 hover:opacity-100"><i class="fa-solid fa-lock"></i> ปิดหีบและส่งผลคะแนน</button><button id="btn-save-staff" onclick="saveStaffScores(false)" class="w-full sm:flex-1 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white font-black py-3 sm:py-4 md:py-5 px-4 rounded-xl sm:rounded-2xl shadow-[0_10px_20px_-10px_rgba(16,185,129,0.5)] flex items-center justify-center gap-2 transition-transform active:scale-95 text-base sm:text-lg md:text-xl border-b-4 border-teal-800 order-1 sm:order-2"><i class="fa-solid fa-save text-lg sm:text-xl"></i> บันทึกชั่วคราว</button></div></div></div></div>`;
             return html;
@@ -1447,26 +1890,26 @@
             if (isClosed) { html += `<div class="bg-rose-50 border-b border-rose-200 p-4 flex items-center gap-3"><div class="text-rose-500 text-2xl"><i class="fa-solid fa-lock"></i></div><div><h4 class="font-bold text-rose-700">หน่วยนี้ถูกกด "ปิดหีบ" แล้ว</h4><p class="text-xs text-rose-600">หากต้องการแก้ไข ต้องใช้ความระมัดระวัง (ข้อมูลเดิมจะถูกทับ)</p></div></div>`; } 
             else { html += `<div class="bg-blue-50 border-b border-blue-100 p-3 flex justify-between items-center text-xs sm:text-sm"><span class="font-bold text-blue-700"><i class="fa-solid fa-clock-rotate-left mr-1"></i> อัปเดตล่าสุด: ${lastSubmitTime} น.</span><span class="bg-blue-200 text-blue-800 px-2 py-0.5 rounded-full font-bold">บันทึกแล้ว ${submitCount} ครั้ง</span></div>`; }
             
-            html += `<div class="p-3 sm:p-4 md:p-6 space-y-6"><div><h3 class="font-extrabold text-lg text-slate-700 mb-3 flex items-center gap-2 pb-2 border-b-2 border-slate-200"><i class="fa-solid fa-users"></i> ข้อมูลหน่วย</h3><div class="flex justify-between items-center p-3 bg-white rounded-xl border border-slate-200 shadow-sm"><h4 class="font-bold text-slate-800">จำนวนผู้มีสิทธิ์เลือกตั้ง (คน)</h4><input type="number" min="0" id="c_input_eligible" value="${eligibleVoters}" oninput="handleDraftInput(this.id, this.value)" class="w-24 sm:w-32 text-right bg-slate-50 border border-slate-300 rounded-lg p-2 font-black text-xl text-indigo-600" placeholder="0" /></div></div>`;
+            html += `<div class="p-3 sm:p-4 md:p-6 space-y-6"><div><h3 class="font-extrabold text-lg text-slate-700 mb-3 flex items-center gap-2 pb-2 border-b-2 border-slate-200"><i class="fa-solid fa-users"></i> ข้อมูลหน่วย</h3><div class="flex justify-between items-center p-3 bg-white rounded-xl border border-slate-200 shadow-sm"><h4 class="font-bold text-slate-800">จำนวนผู้มีสิทธิ์เลือกตั้ง (คน)</h4><input type="number" min="0" id="c_input_eligible" value="${eligibleVoters}" oninput="handleDraftInput(this.id, this.value)" onfocus="this.select()" class="w-24 sm:w-32 text-right bg-slate-50 border border-slate-300 rounded-lg p-2 font-black text-xl text-indigo-600" placeholder="0" /></div></div>`;
 
             html += `<div><h3 class="font-extrabold text-lg text-amber-600 mb-3 flex items-center gap-2 pb-2 border-b-2 border-amber-100"><i class="fa-solid fa-medal"></i> นายกเทศมนตรี</h3><div class="space-y-2">`;
             myMayor.forEach(c => {
                 const val = draftScores[`c_input_m_${c.id}`] !== undefined ? draftScores[`c_input_m_${c.id}`] : (state.scores[`z${zone}_s${station}_candidate_${c.id}`] || '');
-                html += `<div class="flex justify-between items-center p-3 bg-white rounded-xl border border-slate-200 shadow-sm"><div class="flex items-center gap-3"><div class="w-8 h-8 bg-slate-100 rounded-lg flex items-center justify-center font-black text-slate-600">${c.number}</div><h4 class="font-bold text-slate-800 text-sm sm:text-base">${c.name}</h4></div><input type="number" min="0" id="c_input_m_${c.id}" value="${val}" oninput="handleDraftInput(this.id, this.value)" class="w-24 sm:w-32 text-right bg-slate-50 border border-slate-300 rounded-lg p-2 font-black text-xl text-amber-600" placeholder="0" /></div>`;
+                html += `<div class="flex justify-between items-center p-3 bg-white rounded-xl border border-slate-200 shadow-sm"><div class="flex items-center gap-3"><div class="w-8 h-8 bg-slate-100 rounded-lg flex items-center justify-center font-black text-slate-600">${c.number}</div><h4 class="font-bold text-slate-800 text-sm sm:text-base">${c.name}</h4></div><input type="number" min="0" id="c_input_m_${c.id}" value="${val}" oninput="handleDraftInput(this.id, this.value)" onfocus="this.select()" class="w-24 sm:w-32 text-right bg-slate-50 border border-slate-300 rounded-lg p-2 font-black text-xl text-amber-600" placeholder="0" /></div>`;
             });
             const mNoVote = draftScores['c_input_m_novote'] !== undefined ? draftScores['c_input_m_novote'] : (state.scores[`z${zone}_s${station}_mayor_novote`] || '');
             const mInvalid = draftScores['c_input_m_invalid'] !== undefined ? draftScores['c_input_m_invalid'] : (state.scores[`z${zone}_s${station}_mayor_invalid`] || '');
-            html += `<div class="grid grid-cols-2 gap-3 mt-3"><div class="bg-slate-50 p-2 rounded-lg border border-slate-200 flex justify-between items-center"><label class="text-xs font-bold text-slate-500">ไม่ประสงค์</label><input type="number" id="c_input_m_novote" value="${mNoVote}" oninput="handleDraftInput(this.id, this.value)" class="w-16 text-right border border-slate-300 rounded p-1 font-bold text-slate-700" placeholder="0"></div><div class="bg-red-50 p-2 rounded-lg border border-red-100 flex justify-between items-center"><label class="text-xs font-bold text-red-500">บัตรเสีย</label><input type="number" id="c_input_m_invalid" value="${mInvalid}" oninput="handleDraftInput(this.id, this.value)" class="w-16 text-right border border-red-300 rounded p-1 font-bold text-red-600" placeholder="0"></div></div></div></div>`;
+            html += `<div class="grid grid-cols-2 gap-3 mt-3"><div class="bg-slate-50 p-2 rounded-lg border border-slate-200 flex justify-between items-center"><label class="text-xs font-bold text-slate-500">ไม่ประสงค์</label><input type="number" id="c_input_m_novote" value="${mNoVote}" oninput="handleDraftInput(this.id, this.value)" onfocus="this.select()" class="w-16 text-right border border-slate-300 rounded p-1 font-bold text-slate-700" placeholder="0"></div><div class="bg-red-50 p-2 rounded-lg border border-red-100 flex justify-between items-center"><label class="text-xs font-bold text-red-500">บัตรเสีย</label><input type="number" id="c_input_m_invalid" value="${mInvalid}" oninput="handleDraftInput(this.id, this.value)" onfocus="this.select()" class="w-16 text-right border border-red-300 rounded p-1 font-bold text-red-600" placeholder="0"></div></div></div></div>`;
             
             html += `<div><h3 class="font-extrabold text-lg text-blue-600 mb-3 flex items-center gap-2 pb-2 border-b-2 border-blue-100 mt-6"><i class="fa-solid fa-users"></i> สมาชิกสภาเทศบาล (ส.ท.)</h3><div class="grid grid-cols-1 sm:grid-cols-2 gap-2">`;
             myCouncil.forEach(c => {
                 const val = draftScores[`c_input_c_${c.id}`] !== undefined ? draftScores[`c_input_c_${c.id}`] : (state.scores[`z${zone}_s${station}_candidate_${c.id}`] || '');
-                html += `<div class="flex justify-between items-center p-2 bg-white rounded-xl border border-slate-200 shadow-sm"><div class="flex items-center gap-2"><div class="w-6 h-6 bg-slate-100 rounded flex items-center justify-center font-black text-xs text-slate-600">${c.number}</div><h4 class="font-bold text-slate-800 text-xs sm:text-sm truncate w-24 sm:w-32">${c.name}</h4></div><input type="number" min="0" id="c_input_c_${c.id}" value="${val}" oninput="handleDraftInput(this.id, this.value)" class="w-16 sm:w-20 text-right bg-slate-50 border border-slate-300 rounded p-1.5 font-bold text-lg text-blue-600" placeholder="0" /></div>`;
+                html += `<div class="flex justify-between items-center p-2 bg-white rounded-xl border border-slate-200 shadow-sm"><div class="flex items-center gap-2"><div class="w-6 h-6 bg-slate-100 rounded flex items-center justify-center font-black text-xs text-slate-600">${c.number}</div><h4 class="font-bold text-slate-800 text-xs sm:text-sm truncate w-24 sm:w-32">${c.name}</h4></div><input type="number" min="0" id="c_input_c_${c.id}" value="${val}" oninput="handleDraftInput(this.id, this.value)" onfocus="this.select()" class="w-16 sm:w-20 text-right bg-slate-50 border border-slate-300 rounded p-1.5 font-bold text-lg text-blue-600" placeholder="0" /></div>`;
             });
             const cNoVote = draftScores['c_input_c_novote'] !== undefined ? draftScores['c_input_c_novote'] : (state.scores[`z${zone}_s${station}_council_novote`] || '');
             const cInvalid = draftScores['c_input_c_invalid'] !== undefined ? draftScores['c_input_c_invalid'] : (state.scores[`z${zone}_s${station}_council_invalid`] || '');
             
-            html += `</div><div class="grid grid-cols-2 gap-3 mt-3"><div class="bg-slate-50 p-2 rounded-lg border border-slate-200 flex justify-between items-center"><label class="text-xs font-bold text-slate-500">ไม่ประสงค์</label><input type="number" id="c_input_c_novote" value="${cNoVote}" oninput="handleDraftInput(this.id, this.value)" class="w-16 text-right border border-slate-300 rounded p-1 font-bold text-slate-700" placeholder="0"></div><div class="bg-red-50 p-2 rounded-lg border border-red-100 flex justify-between items-center"><label class="text-xs font-bold text-red-500">บัตรเสีย</label><input type="number" id="c_input_c_invalid" value="${cInvalid}" oninput="handleDraftInput(this.id, this.value)" class="w-16 text-right border border-red-300 rounded p-1 font-bold text-red-600" placeholder="0"></div></div></div></div>`;
+            html += `</div><div class="grid grid-cols-2 gap-3 mt-3"><div class="bg-slate-50 p-2 rounded-lg border border-slate-200 flex justify-between items-center"><label class="text-xs font-bold text-slate-500">ไม่ประสงค์</label><input type="number" id="c_input_c_novote" value="${cNoVote}" oninput="handleDraftInput(this.id, this.value)" onfocus="this.select()" class="w-16 text-right border border-slate-300 rounded p-1 font-bold text-slate-700" placeholder="0"></div><div class="bg-red-50 p-2 rounded-lg border border-red-100 flex justify-between items-center"><label class="text-xs font-bold text-red-500">บัตรเสีย</label><input type="number" id="c_input_c_invalid" value="${cInvalid}" oninput="handleDraftInput(this.id, this.value)" onfocus="this.select()" class="w-16 text-right border border-red-300 rounded p-1 font-bold text-red-600" placeholder="0"></div></div></div></div>`;
 
             html += `<div class="fixed sm:sticky bottom-16 sm:bottom-4 pb-safe sm:pb-0 pt-3 sm:pt-4 z-30 flex flex-col sm:flex-row gap-2 sm:gap-3 bg-white sm:bg-transparent -mx-4 px-4 sm:mx-0 sm:px-0 left-0 w-full sm:w-auto shadow-[0_-5px_15px_-10px_rgba(0,0,0,0.1)] sm:shadow-none border-t border-slate-200 sm:border-none items-center"><button id="btn-close-central" onclick="saveCentralScores(true)" class="w-full sm:w-1/3 bg-rose-500 hover:bg-rose-600 text-white font-bold py-2.5 sm:py-3 px-3 rounded-lg sm:rounded-xl shadow-sm flex items-center justify-center gap-1.5 transition-transform active:scale-95 text-xs sm:text-sm border-b-[3px] border-rose-700 order-2 sm:order-1 opacity-90 hover:opacity-100"><i class="fa-solid fa-lock"></i> ปิดหีบแทนหน่วย</button><button id="btn-save-central" onclick="saveCentralScores(false)" class="w-full sm:flex-1 bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white font-black py-3 sm:py-4 px-4 rounded-xl sm:rounded-2xl shadow-[0_10px_20px_-10px_rgba(59,130,246,0.5)] flex items-center justify-center gap-2 transition-transform active:scale-95 text-base sm:text-lg border-b-4 border-indigo-800 order-1 sm:order-2"><i class="fa-solid fa-cloud-arrow-up text-lg sm:text-xl"></i> บันทึกข้อมูลส่วนกลาง</button></div></div></div>`;
             return html;
@@ -1475,15 +1918,20 @@
         window.renderSettings = function() {
             let html = `<div class="max-w-5xl mx-auto fade-in mt-2 sm:mt-4 px-2 lg:px-4 pb-24 sm:pb-32">`;
 
+            // Header
             html += `<div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-4 sm:p-6 mb-4 sm:mb-6 flex items-center gap-4"><div class="bg-slate-800 p-3 sm:p-4 rounded-xl text-white shadow-sm"><i class="fa-solid fa-users-gear text-xl sm:text-2xl"></i></div><div><h2 class="text-xl sm:text-2xl md:text-3xl font-black text-slate-800 tracking-tight">ตั้งค่าระบบ (Admin)</h2><p class="text-slate-500 font-medium text-xs sm:text-sm mt-1">จัดการผู้สมัคร รหัสผ่านประจำหน่วย และการตั้งค่าพื้นฐาน</p></div></div>`;
 
+            // Control Panel
             html += `<div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4 sm:mb-6">`;
             
+            // Voting Status
             html += `<div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-4 sm:p-6"><h3 class="font-bold text-slate-700 mb-4 flex items-center gap-2 border-b border-slate-100 pb-2"><i class="fa-solid fa-power-off text-indigo-500"></i> สถานะการรับคะแนน</h3><div class="flex items-center justify-between bg-slate-50 p-3 sm:p-4 rounded-xl border border-slate-200"><div class="flex flex-col"><span class="font-bold text-sm sm:text-base ${state.isVotingOpen ? 'text-emerald-600' : 'text-rose-600'}"><i class="fa-solid fa-circle text-[10px] animate-pulse"></i> ระบบ${state.isVotingOpen ? 'เปิด' : 'ปิด'}รับคะแนน</span><span class="text-xs text-slate-500 mt-1">${state.isVotingOpen ? 'เจ้าหน้าที่สามารถส่งข้อมูลได้ตามปกติ' : 'เจ้าหน้าที่ไม่สามารถส่งข้อมูลได้ชั่วคราว'}</span></div><button onclick="toggleVotingStatus()" class="px-4 py-2 sm:py-3 rounded-xl font-bold text-white shadow-md transition-all active:scale-95 text-xs sm:text-sm ${state.isVotingOpen ? 'bg-rose-500 hover:bg-rose-600 border-b-4 border-rose-700' : 'bg-emerald-500 hover:bg-emerald-600 border-b-4 border-emerald-700'}">${state.isVotingOpen ? '<i class="fa-solid fa-lock mr-1"></i> ปิดระบบ' : '<i class="fa-solid fa-unlock mr-1"></i> เปิดระบบ'}</button></div></div>`;
             
+            // Clear Data
             html += `<div class="bg-white rounded-2xl shadow-sm border border-red-100 p-4 sm:p-6 relative overflow-hidden"><div class="absolute -right-4 -top-4 text-red-50 text-6xl"><i class="fa-solid fa-triangle-exclamation"></i></div><h3 class="font-bold text-red-600 mb-4 flex items-center gap-2 border-b border-red-50 pb-2 relative z-10"><i class="fa-solid fa-trash-can"></i> ล้างข้อมูลคะแนน (Danger Zone)</h3><div class="flex items-center justify-between bg-red-50 p-3 sm:p-4 rounded-xl border border-red-200 relative z-10"><div class="flex flex-col"><span class="font-bold text-sm sm:text-base text-red-700">รีเซ็ตคะแนนทั้งหมด</span><span class="text-xs text-red-500 mt-1">รายชื่อและรหัสผ่านจะไม่ถูกลบ</span></div><button onclick="clearVotingData()" class="px-4 py-2 sm:py-3 rounded-xl font-bold text-white bg-slate-800 hover:bg-slate-900 shadow-md transition-all active:scale-95 text-xs sm:text-sm border-b-4 border-black"><i class="fa-solid fa-rotate-left mr-1"></i> ล้างข้อมูล</button></div></div>`;
             html += `</div>`;
 
+            // Stress Test
             html += `
             <div class="bg-purple-50 rounded-2xl shadow-sm border border-purple-200 p-4 sm:p-6 mb-4 sm:mb-6">
                 <h3 class="font-bold text-purple-700 mb-2 flex items-center gap-2"><i class="fa-solid fa-flask"></i> ทดสอบความเสถียร (Stress Test)</h3>
@@ -1493,26 +1941,31 @@
                 </button>
             </div>`;
 
+            // Candidates
             html += `<div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-4 sm:p-6 mb-4 sm:mb-6"><h3 class="font-bold text-slate-700 mb-4 flex items-center gap-2 border-b border-slate-100 pb-2"><i class="fa-solid fa-user-tie text-indigo-500"></i> จัดการชื่อผู้สมัคร</h3>`;
             
-            html += `<div class="mb-6"><h4 class="text-sm font-bold text-amber-600 bg-amber-50 inline-block px-3 py-1 rounded-lg">นายกเทศมนตรี</h4><div class="grid grid-cols-1 md:grid-cols-2 gap-3">`;
+            // Mayor
+            html += `<div class="mb-6"><h4 class="text-sm font-bold text-amber-600 mb-3 bg-amber-50 inline-block px-3 py-1 rounded-lg">นายกเทศมนตรี</h4><div class="grid grid-cols-1 md:grid-cols-2 gap-3">`;
             state.mayorCandidates.forEach(c => {
                 html += `<div class="flex items-center gap-2 bg-slate-50 p-2 rounded-xl border border-slate-200"><div class="w-8 h-8 bg-white border border-slate-200 rounded-lg flex items-center justify-center font-bold text-slate-600 shrink-0">${c.number}</div><input type="text" value="${c.name}" onchange="updateCandidateName('mayor', '${c.id}', this.value)" class="flex-1 bg-white border border-slate-300 rounded-lg p-2 text-sm font-medium focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"></div>`;
             });
             html += `</div></div>`;
 
-            html += `<div class="mb-6"><h4 class="text-sm font-bold text-blue-600 bg-blue-50 inline-block px-3 py-1 rounded-lg">ส.ท. เขตเลือกตั้งที่ 1</h4><div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">`;
+            // Council Zone 1
+            html += `<div class="mb-6"><h4 class="text-sm font-bold text-blue-600 mb-3 bg-blue-50 inline-block px-3 py-1 rounded-lg">ส.ท. เขตเลือกตั้งที่ 1</h4><div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">`;
             state.councilCandidates[1].forEach(c => {
                 html += `<div class="flex items-center gap-2 bg-slate-50 p-1.5 rounded-xl border border-slate-200"><div class="w-7 h-7 bg-white border border-slate-200 rounded-md flex items-center justify-center font-bold text-xs text-slate-600 shrink-0">${c.number}</div><input type="text" value="${c.name}" onchange="updateCandidateName('council', '${c.id}', this.value, 1)" class="flex-1 bg-white border border-slate-300 rounded-lg p-1.5 text-xs font-medium focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 min-w-0"></div>`;
             });
             html += `</div></div>`;
 
-            html += `<div><h4 class="text-sm font-bold text-blue-600 bg-blue-50 inline-block px-3 py-1 rounded-lg">ส.ท. เขตเลือกตั้งที่ 2</h4><div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">`;
+            // Council Zone 2
+            html += `<div><h4 class="text-sm font-bold text-blue-600 mb-3 bg-blue-50 inline-block px-3 py-1 rounded-lg">ส.ท. เขตเลือกตั้งที่ 2</h4><div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">`;
             state.councilCandidates[2].forEach(c => {
                 html += `<div class="flex items-center gap-2 bg-slate-50 p-1.5 rounded-xl border border-slate-200"><div class="w-7 h-7 bg-white border border-slate-200 rounded-md flex items-center justify-center font-bold text-xs text-slate-600 shrink-0">${c.number}</div><input type="text" value="${c.name}" onchange="updateCandidateName('council', '${c.id}', this.value, 2)" class="flex-1 bg-white border border-slate-300 rounded-lg p-1.5 text-xs font-medium focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 min-w-0"></div>`;
             });
             html += `</div></div></div>`;
 
+            // Staff PIN
             html += `<div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-4 sm:p-6 mb-4 sm:mb-6"><h3 class="font-bold text-slate-700 mb-4 flex items-center gap-2 border-b border-slate-100 pb-2"><i class="fa-solid fa-key text-indigo-500"></i> รหัสผ่านประจำหน่วย (PIN)</h3><p class="text-xs text-slate-500 mb-4">กำหนดรหัสผ่านสำหรับให้เจ้าหน้าที่แต่ละหน่วยเข้าสู่ระบบ</p>`;
             const renderStaffInputs = (zone) => {
                 let res = `<div class="mb-6"><h4 class="text-sm font-bold text-slate-700 mb-3 bg-slate-100 inline-block px-3 py-1 rounded-lg">เขตเลือกตั้งที่ ${zone}</h4><div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">`;
@@ -1528,10 +1981,12 @@
             html += renderStaffInputs(2);
             html += `</div>`;
 
+            // Google Sheets
             html += `<div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-4 sm:p-6 mb-4 sm:mb-6"><h3 class="font-bold text-slate-700 mb-4 flex items-center gap-2 border-b border-slate-100 pb-2"><i class="fa-solid fa-cloud text-indigo-500"></i> การเชื่อมต่อและสำรองข้อมูล</h3><div class="flex flex-col gap-3"><label class="text-sm font-bold text-slate-700">Google Apps Script Web App URL</label><input type="text" value="${state.googleSheetUrl || ''}" onchange="updateGoogleSheetUrl(this.value)" class="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 text-sm font-medium focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-slate-600" placeholder="https://script.google.com/macros/s/.../exec"><div class="flex flex-col sm:flex-row gap-3 mt-2"><button id="btn-sync-sheet" onclick="syncToGoogleSheet()" class="px-4 py-2 sm:py-3 rounded-xl font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 transition-all text-xs sm:text-sm flex items-center justify-center gap-2"><i class="fa-solid fa-cloud-arrow-up"></i> บังคับบันทึกข้อมูลไปชีตทันที</button></div><p class="text-[10px] sm:text-xs text-slate-500 mt-1">* ระบบจะบันทึกข้อมูลไปยัง Firebase ทันทีแบบ Real-time อยู่แล้ว ส่วน Google Sheet จะเป็นการสำรองข้อมูลทุก 3 วินาทีเมื่อมีการเปลี่ยนแปลง</p></div></div>`;
 
             html += `</div>`;
 
+            // Floating Save Button
             html += `<div class="fixed sm:sticky bottom-14 sm:bottom-4 pb-safe sm:pb-0 pt-3 sm:pt-4 z-40 flex justify-center bg-white/80 sm:bg-transparent backdrop-blur-md sm:backdrop-blur-none -mx-4 px-4 sm:mx-0 sm:px-0 left-0 w-full sm:w-auto shadow-[0_-5px_15px_-10px_rgba(0,0,0,0.1)] sm:shadow-none border-t border-slate-200 sm:border-none"><button id="btn-save-settings" onclick="saveSettingsPermanent()" class="w-full max-w-md bg-indigo-600 hover:bg-indigo-700 text-white font-black py-3.5 sm:py-4 px-6 rounded-2xl shadow-[0_10px_20px_-10px_rgba(79,70,229,0.5)] flex items-center justify-center gap-2 transition-transform active:scale-95 text-base sm:text-lg border-b-4 border-indigo-800"><i class="fa-solid fa-save"></i> บันทึกการตั้งค่า</button></div>`;
 
             return html;
@@ -1548,12 +2003,15 @@
             else if (state.activeTab === 'input' && state.currentUser?.role === 'staff') { mainContent.innerHTML = renderStaffInput(); updateTimerUI(); }
             else if (state.activeTab === 'centralInput' && state.currentUser?.role === 'central') mainContent.innerHTML = renderCentralInput();
             else if (state.activeTab === 'status' && state.currentUser?.role === 'admin') mainContent.innerHTML = renderStatus();
+            else if (state.activeTab === 'adminReport' && state.currentUser?.role === 'admin') mainContent.innerHTML = renderAdminReport();
             else if (state.activeTab === 'settings' && state.currentUser?.role === 'admin') mainContent.innerHTML = renderSettings();
             else { state.activeTab = 'dashboard'; mainContent.innerHTML = renderDashboard(); }
         }
 
         window.onload = async () => {
             loadLocalData();
+            
+            // รอโหลดข้อมูลครั้งแรกก่อนให้เริ่มใช้งาน
             await fetchFromGoogleSheet();
             initDefaultStaff();
             
